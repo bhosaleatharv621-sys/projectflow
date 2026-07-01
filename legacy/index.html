@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PSS Time Tracker</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root{
+      --primary:#1a237e;--pl:#3949ab;
+      --success:#2e7d32;--danger:#c62828;--warning:#e65100;--bg:#eef0f5;
+    }
+    *{box-sizing:border-box}
+    body{background:var(--bg);font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh;margin:0}
+
+    /* HEADER */
+    .app-hdr{background:linear-gradient(135deg,var(--primary),var(--pl));color:white;
+      padding:.85rem 1.5rem;display:flex;align-items:center;justify-content:space-between;
+      box-shadow:0 3px 12px rgba(0,0,0,.25);position:sticky;top:0;z-index:200}
+    .app-hdr h5{margin:0;font-size:1.1rem;font-weight:700}
+    .app-hdr small{opacity:.75;font-size:.75rem}
+
+    /* NAV */
+    .nav-bar{background:white;border-bottom:2px solid #dde0ee;padding:0 1rem;display:flex;
+      position:sticky;top:58px;z-index:199;box-shadow:0 2px 6px rgba(0,0,0,.06);overflow-x:auto}
+    .nav-bar a{color:#666;border:none;padding:.7rem 1.1rem;font-weight:500;font-size:.875rem;
+      border-bottom:3px solid transparent;margin-bottom:-2px;transition:all .18s;
+      display:flex;align-items:center;gap:.4rem;cursor:pointer;text-decoration:none;white-space:nowrap}
+    .nav-bar a:hover{color:var(--primary);background:#f3f4fb}
+    .nav-bar a.active{color:var(--primary);border-bottom-color:var(--primary);font-weight:600}
+
+    .content{padding:1.25rem;max-width:1200px;margin:0 auto}
+
+    /* ── TIMER SLOTS ─────────────────────────────────────────── */
+    .timer-slot{
+      background:white;border-radius:14px;padding:1.25rem;
+      border-left:5px solid var(--pl);
+      box-shadow:0 2px 12px rgba(0,0,0,.08);
+      transition:border-color .3s,box-shadow .2s;
+    }
+    .timer-slot:hover{box-shadow:0 4px 20px rgba(0,0,0,.12)}
+    .timer-slot[data-state="running"]{border-left-color:var(--success)}
+    .timer-slot[data-state="paused"] {border-left-color:var(--warning)}
+
+    /* show / hide buttons via CSS data-state — no JS toggling needed */
+    .timer-slot[data-state="stopped"] .s-resume,
+    .timer-slot[data-state="stopped"] .s-pause,
+    .timer-slot[data-state="stopped"] .s-stop   {display:none}
+
+    .timer-slot[data-state="running"] .s-start,
+    .timer-slot[data-state="running"] .s-resume,
+    .timer-slot[data-state="running"] .s-remove  {display:none}
+
+    .timer-slot[data-state="paused"]  .s-start,
+    .timer-slot[data-state="paused"]  .s-pause   {display:none}
+
+    .timer-slot[data-state="running"] .slot-sel,
+    .timer-slot[data-state="paused"]  .slot-sel  {pointer-events:none;opacity:.6}
+
+    .timer-slot[data-state="running"] .s-remove,
+    .timer-slot[data-state="paused"]  .s-remove  {display:none}
+
+    /* timer display */
+    .slot-time{
+      font-size:3rem;font-family:'Courier New',monospace;font-weight:700;
+      color:var(--primary);letter-spacing:4px;text-align:center;
+      padding:.4rem 0;transition:color .3s;line-height:1
+    }
+    .slot-time.running{color:var(--success)}
+    .slot-time.paused {color:var(--warning)}
+
+    /* buttons */
+    .btn-go{
+      border:none;border-radius:50px;padding:.5rem 1.4rem;
+      font-size:.875rem;font-weight:600;cursor:pointer;
+      transition:all .18s;color:white;display:inline-flex;align-items:center;gap:.3rem
+    }
+    .btn-go:disabled{opacity:.4;cursor:not-allowed}
+    .btn-go.start {background:var(--success)} .btn-go.start:hover:not(:disabled){background:#1b5e20}
+    .btn-go.pause {background:var(--warning)} .btn-go.pause:hover:not(:disabled){background:#bf360c}
+    .btn-go.stop  {background:var(--danger)}  .btn-go.stop:hover:not(:disabled) {background:#7f0000}
+
+    .pulse{animation:pulse 1.5s infinite}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+
+    /* PROJECT CARDS */
+    .proj-card{background:white;border-radius:12px;padding:1.1rem 1.25rem;
+      margin-bottom:.85rem;box-shadow:0 1px 8px rgba(0,0,0,.06);
+      border-left:4px solid var(--pl);transition:box-shadow .2s}
+    .proj-card:hover{box-shadow:0 4px 18px rgba(0,0,0,.12)}
+
+    /* SESSION ITEMS */
+    .sess-item{display:flex;justify-content:space-between;align-items:center;
+      padding:.65rem 1rem;border:1px solid #e8eaf6;border-radius:10px;
+      margin-bottom:.5rem;background:#fafbff}
+
+    /* KPI / CHART CARDS */
+    .kpi-card{background:white;border-radius:12px;padding:1.1rem;
+      box-shadow:0 1px 8px rgba(0,0,0,.06);text-align:center}
+    .kpi-card .val{font-size:1.85rem;font-weight:700;line-height:1.1}
+    .kpi-card .lbl{font-size:.78rem;color:#666;margin-top:.3rem}
+    .chart-card{background:white;border-radius:12px;padding:1.25rem;
+      box-shadow:0 1px 8px rgba(0,0,0,.06);margin-bottom:1rem}
+    .chart-card h6{color:var(--primary);font-weight:700;margin-bottom:1rem}
+
+    .tbl thead{background:var(--primary);color:white}
+    .tbl thead th{border:none;font-weight:500;padding:.65rem .85rem;font-size:.82rem}
+    .tbl tbody td{padding:.6rem .85rem;vertical-align:middle;font-size:.85rem}
+    .tbl tbody tr:hover{background:#f5f7ff}
+
+    .modal-header{background:var(--primary);color:white}
+    .modal-header .btn-close{filter:invert(1)}
+
+    .tag-item{display:inline-flex;align-items:center;gap:.35rem;background:#e8eaf6;
+      color:var(--primary);padding:.25rem .65rem;border-radius:20px;margin:.2rem;
+      font-size:.82rem;font-weight:500}
+    .tag-x{cursor:pointer;color:var(--danger);font-weight:700;font-size:1rem;line-height:1}
+    .tag-x:hover{color:#7f0000}
+
+    .progress{height:7px;border-radius:4px}
+    .stat-badge{padding:.3em .7em;border-radius:20px;font-size:.75rem;font-weight:600;color:white;white-space:nowrap}
+    .empty{text-align:center;color:#999;padding:2rem 1rem}
+    .empty i{font-size:2.5rem;display:block;margin-bottom:.5rem;opacity:.4}
+
+    /* add-timer button area */
+    .add-timer-area{
+      border:2px dashed #c5cae9;border-radius:14px;padding:1.5rem;
+      text-align:center;cursor:pointer;transition:all .2s;color:var(--pl);
+      background:rgba(63,81,181,.04)
+    }
+    .add-timer-area:hover{border-color:var(--pl);background:rgba(63,81,181,.08)}
+
+    @media(max-width:640px){
+      .slot-time{font-size:2.3rem;letter-spacing:2px}
+      .content{padding:.85rem}
+    }
+  </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="app-hdr">
+  <div>
+    <h5><i class="bi bi-lightning-charge-fill me-2" style="color:#ffd54f"></i>PSS Time Tracker</h5>
+    <small>Power System Studies — Engineering Team</small>
+  </div>
+  <div class="text-end">
+    <div id="liveClock" style="font-size:1.05rem;font-weight:700;letter-spacing:1px"></div>
+    <small id="liveDate"></small>
+  </div>
+</div>
+
+<!-- NAV -->
+<div class="nav-bar">
+  <a id="nav-timer"     class="active" onclick="switchTab('timer',this)"><i class="bi bi-stopwatch"></i>Timer</a>
+  <a id="nav-projects"  onclick="switchTab('projects',this)"><i class="bi bi-folder2-open"></i>Projects</a>
+  <a id="nav-dashboard" onclick="switchTab('dashboard',this)"><i class="bi bi-bar-chart-line"></i>Dashboard</a>
+  <a id="nav-settings"  onclick="switchTab('settings',this)"><i class="bi bi-sliders"></i>Settings</a>
+</div>
+
+<div class="content">
+
+  <!-- ════════ TIMER TAB ════════ -->
+  <div id="tab-timer">
+    <!-- active timer slots -->
+    <div class="row g-3 mb-3" id="timerSlots"></div>
+
+    <!-- add timer -->
+    <div class="add-timer-area mb-4" onclick="addTimerSlot()">
+      <i class="bi bi-plus-circle" style="font-size:1.8rem;display:block;margin-bottom:.4rem"></i>
+      <span class="fw-semibold">Add Timer</span>
+      <div style="font-size:.8rem;margin-top:.2rem;opacity:.7">Track a new project simultaneously</div>
+    </div>
+
+    <!-- today sessions -->
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <div style="font-weight:700;font-size:.95rem"><i class="bi bi-list-check text-primary me-1"></i>Today's Sessions</div>
+      <div class="d-flex gap-2 align-items-center">
+        <span class="badge bg-primary rounded-pill" id="todayTotal">0h 0m</span>
+        <button class="btn btn-sm btn-outline-primary rounded-pill" onclick="openManualEntry()"><i class="bi bi-plus-lg me-1"></i>Add Manual</button>
+      </div>
+    </div>
+    <div id="todayList"></div>
+  </div>
+
+  <!-- ════════ PROJECTS TAB ════════ -->
+  <div id="tab-projects" class="d-none">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div style="font-weight:700;font-size:.95rem"><i class="bi bi-folder2-open text-primary me-1"></i>Projects</div>
+      <button class="btn btn-primary rounded-pill btn-sm px-3" onclick="openProjectModal()"><i class="bi bi-plus-lg me-1"></i>Add Project</button>
+    </div>
+    <div class="chart-card mb-3 py-2">
+      <div class="row g-2">
+        <div class="col-md-5"><input type="text" class="form-control form-control-sm" id="projSearch" placeholder="Search…" oninput="renderProjects()"></div>
+        <div class="col-md-3"><select class="form-select form-select-sm" id="projSF" onchange="renderProjects()"><option value="">All Statuses</option></select></div>
+        <div class="col-md-3"><select class="form-select form-select-sm" id="projCF" onchange="renderProjects()"><option value="">All Categories</option></select></div>
+      </div>
+    </div>
+    <div id="projList"></div>
+  </div>
+
+  <!-- ════════ DASHBOARD TAB ════════ -->
+  <div id="tab-dashboard" class="d-none">
+    <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+      <div class="btn-group btn-group-sm">
+        <button class="btn btn-primary"        id="btnDay"   onclick="setDashView('day')">Daily</button>
+        <button class="btn btn-outline-primary" id="btnMonth" onclick="setDashView('month')">Monthly</button>
+      </div>
+      <input type="date"  class="form-control form-control-sm" id="dashDate"  style="max-width:155px" onchange="renderDashboard()">
+      <input type="month" class="form-control form-control-sm d-none" id="dashMonth" style="max-width:155px" onchange="renderDashboard()">
+    </div>
+    <div class="row g-3 mb-3" id="kpiCards"></div>
+    <div class="row g-3 mb-3">
+      <div class="col-lg-8"><div class="chart-card"><h6><i class="bi bi-bar-chart me-1"></i>Hours by Project</h6><canvas id="barChart" height="220"></canvas></div></div>
+      <div class="col-lg-4"><div class="chart-card"><h6><i class="bi bi-pie-chart me-1"></i>Distribution</h6><canvas id="dnutChart" height="220"></canvas></div></div>
+    </div>
+    <div id="dailySect" class="d-none mb-3">
+      <div class="chart-card"><h6><i class="bi bi-calendar3 me-1"></i>Daily Hours (Month)</h6><canvas id="dailyChart" height="160"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h6><i class="bi bi-table me-1"></i>Project Summary</h6>
+      <div class="table-responsive">
+        <table class="table tbl table-bordered table-sm mb-0">
+          <thead><tr><th>Proj #</th><th>Name</th><th>Category</th><th>Status</th><th>Value (₹)</th><th>Planned h</th><th>Actual h</th><th>Remaining h</th><th>Progress</th><th>Start</th><th>End</th></tr></thead>
+          <tbody id="summaryBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════ SETTINGS TAB ════════ -->
+  <div id="tab-settings" class="d-none">
+    <div class="row g-3">
+      <div class="col-md-6">
+        <div class="chart-card">
+          <h6><i class="bi bi-tag me-1"></i>Project Statuses</h6>
+          <div id="statusTags" class="mb-3" style="min-height:48px"></div>
+          <div class="input-group input-group-sm">
+            <input type="text" class="form-control" id="newStatus" placeholder="Add new status…" onkeydown="if(event.key==='Enter')addStatus()">
+            <button class="btn btn-primary" onclick="addStatus()"><i class="bi bi-plus-lg"></i></button>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="chart-card">
+          <h6><i class="bi bi-grid-3x3-gap me-1"></i>Study Categories</h6>
+          <div id="catTags" class="mb-3" style="min-height:48px"></div>
+          <div class="input-group input-group-sm">
+            <input type="text" class="form-control" id="newCat" placeholder="Add new category…" onkeydown="if(event.key==='Enter')addCategory()">
+            <button class="btn btn-primary" onclick="addCategory()"><i class="bi bi-plus-lg"></i></button>
+          </div>
+        </div>
+      </div>
+      <div class="col-12">
+        <div class="chart-card">
+          <h6><i class="bi bi-database me-1"></i>Data Management</h6>
+          <div class="d-flex gap-2 flex-wrap">
+            <button class="btn btn-sm btn-outline-primary" onclick="exportJSON()"><i class="bi bi-download me-1"></i>Export JSON</button>
+            <button class="btn btn-sm btn-outline-success" onclick="exportCSV()"><i class="bi bi-file-spreadsheet me-1"></i>Export CSV</button>
+            <button class="btn btn-sm btn-outline-danger"  onclick="clearAll()"><i class="bi bi-trash me-1"></i>Clear All Data</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /content -->
+
+<!-- PROJECT MODAL -->
+<div class="modal fade" id="projectModal" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="projModalTitle">Add Project</h5>
+        <button type="button" class="btn-close" id="projModalClose"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <div class="col-md-4"><label class="form-label fw-semibold">Project Number <span class="text-danger">*</span></label><input type="text" class="form-control" id="pNum" placeholder="e.g. PSS-2024-001"></div>
+          <div class="col-md-8"><label class="form-label fw-semibold">Project Name <span class="text-danger">*</span></label><input type="text" class="form-control" id="pName" placeholder="Project name"></div>
+          <div class="col-md-4"><label class="form-label fw-semibold">Project Value (₹)</label><input type="number" class="form-control" id="pValue" placeholder="0" min="0"></div>
+          <div class="col-md-4"><label class="form-label fw-semibold">Planned Hours</label><input type="number" class="form-control" id="pPlanned" placeholder="0" min="0" step="0.5"></div>
+          <div class="col-md-4"><label class="form-label fw-semibold">Category</label><select class="form-select" id="pCat"></select></div>
+          <div class="col-md-4"><label class="form-label fw-semibold">Status</label><select class="form-select" id="pStatus"></select></div>
+          <div class="col-md-4"><label class="form-label fw-semibold">Start Date</label><input type="date" class="form-control" id="pStart"></div>
+          <div class="col-md-4"><label class="form-label fw-semibold">End Date</label><input type="date" class="form-control" id="pEnd"></div>
+          <div class="col-12"><label class="form-label fw-semibold">Client / Description</label><textarea class="form-control" id="pDesc" rows="2" placeholder="Client name, scope, or notes…"></textarea></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="projCancelBtn">Cancel</button>
+        <button class="btn btn-primary" onclick="saveProject()"><i class="bi bi-check-lg me-1"></i>Save Project</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SESSION MODAL -->
+<div class="modal fade" id="sessionModal" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="sessModalTitle">Session</h5>
+        <button type="button" class="btn-close" id="sessModalClose"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3"><label class="form-label fw-semibold">Project</label><select class="form-select" id="sProject"></select></div>
+        <div class="row g-3 mb-3">
+          <div class="col-6"><label class="form-label fw-semibold">Start</label><input type="datetime-local" class="form-control" id="sStart"></div>
+          <div class="col-6"><label class="form-label fw-semibold">End</label><input type="datetime-local" class="form-control" id="sEnd"></div>
+        </div>
+        <div><label class="form-label fw-semibold">Notes</label><textarea class="form-control" id="sNotes" rows="2" placeholder="What did you work on?"></textarea></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="sessCancelBtn">Cancel</button>
+        <button class="btn btn-primary" onclick="saveSession()"><i class="bi bi-check-lg me-1"></i>Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// ══════════════════════════════════════════════════════
+//  STATE
+// ══════════════════════════════════════════════════════
+const DEFS = {
+  projects:[], sessions:[],
+  activeTimers:[],   // ← multi-timer slots
+  settings:{
+    statuses:['Planning','In Progress','On Hold','Completed','Cancelled'],
+    categories:['Load Flow','Short Circuit','Arc Flash','Harmonic Analysis',
+                'Protection Coordination','Cable Sizing','Motor Starting','Misc']
+  }
+};
+let S = clone(DEFS);
+let masterIv = null;   // single interval for ALL timers
+let editProjId=null, editSessId=null, dashView='day';
+let barChart=null, dnutChart=null, dailyChart=null;
+let projModal=null, sessModal=null;
+
+function clone(o){return JSON.parse(JSON.stringify(o))}
+
+// ══════════════════════════════════════════════════════
+//  PERSIST
+// ══════════════════════════════════════════════════════
+function save(){
+  localStorage.setItem('pss_v4',JSON.stringify({
+    projects:S.projects, sessions:S.sessions,
+    activeTimers:S.activeTimers, settings:S.settings
+  }));
+}
+function load(){
+  try{
+    const r=localStorage.getItem('pss_v4');
+    if(!r)return;
+    const d=JSON.parse(r);
+    S.projects     = d.projects     ||[];
+    S.sessions     = d.sessions     ||[];
+    S.activeTimers = d.activeTimers ||[];
+    S.settings     = Object.assign(clone(DEFS.settings), d.settings||{});
+  }catch(e){console.error(e)}
+}
+
+// ══════════════════════════════════════════════════════
+//  CLOCK
+// ══════════════════════════════════════════════════════
+function tick(){
+  const n=new Date();
+  document.getElementById('liveClock').textContent=
+    n.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  document.getElementById('liveDate').textContent=
+    n.toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
+}
+
+// ══════════════════════════════════════════════════════
+//  TABS
+// ══════════════════════════════════════════════════════
+function switchTab(tab,el){
+  ['timer','projects','dashboard','settings'].forEach(t=>
+    document.getElementById('tab-'+t).classList.toggle('d-none',t!==tab));
+  document.querySelectorAll('.nav-bar a').forEach(a=>a.classList.remove('active'));
+  el.classList.add('active');
+  if(tab==='dashboard')setTimeout(renderDashboard,60);
+  if(tab==='projects') renderProjects();
+  if(tab==='settings') renderSettings();
+}
+
+// ══════════════════════════════════════════════════════
+//  MULTI-TIMER CORE
+// ══════════════════════════════════════════════════════
+
+/** Current elapsed seconds for a timer object */
+function getElapsed(t){
+  let el = t.elapsed||0;
+  if(t.state==='running' && t.lastStart){
+    el += Math.floor((Date.now()-t.lastStart)/1000);
+  }
+  return el;
+}
+
+/** Master tick: update display of all running timers */
+function tickAll(){
+  S.activeTimers.forEach(t=>{
+    if(t.state!=='running')return;
+    const el=document.getElementById('td-'+t.id);
+    if(el)el.textContent=secsToHMS(getElapsed(t));
+  });
+}
+
+function startMasterTick(){
+  if(masterIv)return;
+  masterIv=setInterval(tickAll,1000);
+}
+function checkStopMaster(){
+  if(S.activeTimers.some(t=>t.state==='running'))return;
+  if(masterIv){clearInterval(masterIv);masterIv=null;}
+}
+
+// ── slot actions ──────────────────────────────────────
+function addTimerSlot(){
+  const t={
+    id:String(Date.now()),
+    projectId:null, state:'stopped',
+    elapsed:0, lastStart:null, sessionStart:null
+  };
+  S.activeTimers.push(t);
+  save();
+  renderSlots();
+}
+
+function removeSlot(id){
+  const t=S.activeTimers.find(x=>x.id===id);
+  if(!t||t.state!=='stopped'){alert('Stop the timer before removing.');return}
+  S.activeTimers=S.activeTimers.filter(x=>x.id!==id);
+  save(); renderSlots();
+}
+
+function setSlotProject(id, projId){
+  const t=S.activeTimers.find(x=>x.id===id);
+  if(!t)return;
+  t.projectId=projId||null;
+  save();
+  // update project label and enable/disable start
+  const p=S.projects.find(x=>x.id===projId);
+  const lbl=document.getElementById('pl-'+id);
+  if(lbl)lbl.textContent=p?`${p.number} — ${p.name}`:'No project selected';
+  const btn=document.querySelector(`#slot-${id} .s-start`);
+  if(btn)btn.disabled=!projId;
+}
+
+function startSlot(id){
+  const t=S.activeTimers.find(x=>x.id===id);
+  if(!t||!t.projectId){alert('Select a project first.');return}
+  if(t.state==='running')return;
+  t.lastStart=Date.now();
+  if(!t.sessionStart)t.sessionStart=new Date().toISOString();
+  t.state='running';
+  save(); applySlotState(id); startMasterTick();
+}
+
+function pauseSlot(id){
+  const t=S.activeTimers.find(x=>x.id===id);
+  if(!t||t.state!=='running')return;
+  t.elapsed=getElapsed(t);
+  t.lastStart=null;
+  t.state='paused';
+  save(); applySlotState(id); checkStopMaster();
+}
+
+function stopSlot(id){
+  const t=S.activeTimers.find(x=>x.id===id);
+  if(!t||t.state==='stopped')return;
+  const totalSecs=getElapsed(t);
+  if(totalSecs>=1){
+    const startISO=t.sessionStart||new Date(Date.now()-totalSecs*1000).toISOString();
+    const endISO=new Date().toISOString();
+    S.sessions.push({
+      id:String(Date.now()),
+      projectId:t.projectId,
+      startTime:startISO,
+      endTime:endISO,
+      duration:totalSecs,
+      date:startISO.split('T')[0],
+      notes:''
+    });
+  }
+  // reset timer
+  t.elapsed=0; t.lastStart=null; t.sessionStart=null; t.state='stopped';
+  save(); applySlotState(id); checkStopMaster(); renderTodaySessions();
+}
+
+/** Update a slot's visual state without full re-render */
+function applySlotState(id){
+  const t=S.activeTimers.find(x=>x.id===id);
+  const slot=document.getElementById('slot-'+id);
+  if(!t||!slot)return;
+  slot.dataset.state=t.state;
+
+  const disp=document.getElementById('td-'+id);
+  if(disp){
+    disp.classList.toggle('running',t.state==='running');
+    disp.classList.toggle('paused', t.state==='paused');
+    disp.textContent=secsToHMS(getElapsed(t));
+  }
+  const ss=document.getElementById('ss-'+id);
+  if(ss){
+    if(t.state==='running')
+      ss.innerHTML='<span class="pulse text-success" style="font-size:.8rem"><i class="bi bi-circle-fill" style="font-size:.45rem;vertical-align:middle"></i> Recording…</span>';
+    else if(t.state==='paused')
+      ss.innerHTML='<span class="text-warning" style="font-size:.8rem"><i class="bi bi-pause-circle me-1"></i>Paused</span>';
+    else
+      ss.innerHTML='';
+  }
+}
+
+/** Full render of all slots */
+function renderSlots(){
+  const c=document.getElementById('timerSlots');
+  if(!S.activeTimers.length){
+    c.innerHTML='<div class="col-12"><div class="empty" style="padding:1rem"><i class="bi bi-stopwatch" style="font-size:2rem;opacity:.3"></i>No timers yet — click <b>Add Timer</b> below</div></div>';
+    return;
+  }
+  c.innerHTML=S.activeTimers.map(t=>`
+    <div class="col-md-6 col-xl-4">
+      <div class="timer-slot" id="slot-${t.id}" data-state="${t.state}">
+        <div class="d-flex gap-2 mb-2 align-items-center">
+          <select class="form-select form-select-sm slot-sel flex-grow-1"
+                  onchange="setSlotProject('${t.id}',this.value)">
+            <option value="">— Select Project —</option>
+            ${S.projects.filter(p=>p.status!=='Cancelled').map(p=>
+              `<option value="${p.id}"${p.id===t.projectId?' selected':''}>${esc(p.number)} — ${esc(p.name)}</option>`
+            ).join('')}
+          </select>
+          <button class="btn btn-sm btn-outline-danger s-remove py-0 px-2"
+                  onclick="removeSlot('${t.id}')" title="Remove timer">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+
+        <div class="slot-time${t.state==='running'?' running':t.state==='paused'?' paused':''}"
+             id="td-${t.id}">${secsToHMS(getElapsed(t))}</div>
+
+        <div class="text-muted text-center mb-3" style="font-size:.8rem;min-height:1.2em" id="pl-${t.id}">
+          ${(()=>{const p=S.projects.find(x=>x.id===t.projectId);return p?esc(p.number)+' — '+esc(p.name):'No project selected'})()}
+        </div>
+
+        <div class="d-flex gap-2 justify-content-center flex-wrap">
+          <button class="btn-go start s-start" onclick="startSlot('${t.id}')" ${!t.projectId?'disabled':''}>
+            <i class="bi bi-play-fill"></i> Start
+          </button>
+          <button class="btn-go start s-resume" onclick="startSlot('${t.id}')">
+            <i class="bi bi-play-fill"></i> Resume
+          </button>
+          <button class="btn-go pause s-pause" onclick="pauseSlot('${t.id}')">
+            <i class="bi bi-pause-fill"></i> Pause
+          </button>
+          <button class="btn-go stop s-stop" onclick="stopSlot('${t.id}')">
+            <i class="bi bi-stop-fill"></i> Stop
+          </button>
+        </div>
+
+        <div class="slot-status text-center mt-2" id="ss-${t.id}" style="min-height:1.4em">
+          ${t.state==='running'?'<span class="pulse text-success" style="font-size:.8rem"><i class="bi bi-circle-fill" style="font-size:.45rem;vertical-align:middle"></i> Recording…</span>':
+            t.state==='paused'?'<span class="text-warning" style="font-size:.8rem"><i class="bi bi-pause-circle me-1"></i>Paused</span>':''}
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ══════════════════════════════════════════════════════
+//  TODAY SESSIONS
+// ══════════════════════════════════════════════════════
+function renderTodaySessions(){
+  const today=new Date().toISOString().split('T')[0];
+  const list=S.sessions.filter(s=>s.date===today)
+    .sort((a,b)=>b.startTime.localeCompare(a.startTime));
+  const totalSecs=list.reduce((t,s)=>t+s.duration,0);
+  document.getElementById('todayTotal').textContent=secsToHM(totalSecs);
+  const el=document.getElementById('todayList');
+  if(!list.length){
+    el.innerHTML='<div class="empty" style="padding:1.5rem"><i class="bi bi-clock"></i>No sessions recorded today</div>';
+    return;
+  }
+  el.innerHTML=list.map(s=>{
+    const p=S.projects.find(x=>x.id===s.projectId);
+    const pl=p?`<span class="fw-semibold">${esc(p.number)}</span> — ${esc(p.name)}`:'<span class="text-muted">Unknown</span>';
+    return `<div class="sess-item">
+      <div>
+        <div class="small mb-0">${pl}</div>
+        <div class="text-muted" style="font-size:.77rem">${fmtT(s.startTime)} → ${fmtT(s.endTime)}
+          ${s.notes?` <i class="bi bi-chat-text ms-1"></i> ${esc(s.notes)}`:''}</div>
+      </div>
+      <div class="d-flex align-items-center gap-1">
+        <span class="badge rounded-pill bg-primary">${secsToHMS(s.duration)}</span>
+        <button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="openEditSession('${s.id}')" title="Edit"><i class="bi bi-pencil"></i></button>
+        <button class="btn btn-sm btn-outline-danger   py-0 px-1" onclick="delSession('${s.id}')"     title="Delete"><i class="bi bi-trash"></i></button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════════════
+//  PROJECTS
+// ══════════════════════════════════════════════════════
+function openProjectModal(id){
+  editProjId=id||null;
+  document.getElementById('pStatus').innerHTML=
+    '<option value="">Select Status</option>'+S.settings.statuses.map(v=>`<option>${esc(v)}</option>`).join('');
+  document.getElementById('pCat').innerHTML=
+    '<option value="">Select Category</option>'+S.settings.categories.map(v=>`<option>${esc(v)}</option>`).join('');
+  document.getElementById('projModalTitle').textContent=id?'Edit Project':'Add Project';
+  if(id){
+    const p=S.projects.find(x=>x.id===id);
+    sv('pNum',p.number||''); sv('pName',p.name||''); sv('pValue',p.value||'');
+    sv('pPlanned',p.plannedHours||''); sv('pCat',p.category||''); sv('pStatus',p.status||'');
+    sv('pStart',p.startDate||''); sv('pEnd',p.endDate||''); sv('pDesc',p.description||'');
+  }else{
+    ['pNum','pName','pValue','pPlanned','pDesc'].forEach(x=>sv(x,''));
+    sv('pStatus','Planning');
+    sv('pStart',new Date().toISOString().split('T')[0]);
+    sv('pEnd',''); sv('pCat','');
+  }
+  projModal.show();
+}
+
+function saveProject(){
+  const num=gv('pNum').trim(), name=gv('pName').trim();
+  if(!num||!name){alert('Project Number and Name are required.');return}
+  const data={
+    number:num, name,
+    value:       parseFloat(gv('pValue'))  ||0,
+    plannedHours:parseFloat(gv('pPlanned'))||0,
+    category:gv('pCat'), status:gv('pStatus')||'Planning',
+    startDate:gv('pStart'), endDate:gv('pEnd'), description:gv('pDesc').trim()
+  };
+  if(editProjId){
+    const i=S.projects.findIndex(p=>p.id===editProjId);
+    if(i>=0)S.projects[i]={...S.projects[i],...data};
+  }else{
+    S.projects.push({id:String(Date.now()),...data});
+  }
+  save(); projModal.hide(); renderProjects(); renderSlots();
+}
+
+function deleteProject(id){
+  if(!confirm('Delete this project and all its sessions?'))return;
+  S.projects=S.projects.filter(p=>p.id!==id);
+  S.sessions=S.sessions.filter(s=>s.projectId!==id);
+  // stop any active timer for this project
+  S.activeTimers.forEach(t=>{if(t.projectId===id){t.state='stopped';t.elapsed=0;t.lastStart=null;t.sessionStart=null}});
+  save(); renderProjects(); renderSlots();
+}
+
+function renderProjects(){
+  const q=(document.getElementById('projSearch')?.value||'').toLowerCase();
+  const sf=document.getElementById('projSF')?.value||'';
+  const cf=document.getElementById('projCF')?.value||'';
+  setSel('projSF',S.settings.statuses,sf,'All Statuses');
+  setSel('projCF',S.settings.categories,cf,'All Categories');
+  const list=S.projects.filter(p=>{
+    const mq=!q||p.name.toLowerCase().includes(q)||p.number.toLowerCase().includes(q);
+    return mq&&(!sf||p.status===sf)&&(!cf||p.category===cf);
+  });
+  const el=document.getElementById('projList');
+  if(!list.length){el.innerHTML='<div class="empty"><i class="bi bi-folder-x"></i>No projects found.</div>';return}
+  el.innerHTML=list.map(p=>{
+    const actH=S.sessions.filter(s=>s.projectId===p.id).reduce((t,s)=>t+s.duration,0)/3600;
+    const prog=p.plannedHours?Math.min(100,Math.round(actH/p.plannedHours*100)):null;
+    const pc=prog===null?'':(prog>=100?'#c62828':prog>=75?'#e65100':'#2e7d32');
+    const sc=stColor(p.status);
+    return `<div class="proj-card" style="border-left-color:${sc}">
+      <div class="d-flex justify-content-between align-items-start">
+        <div class="flex-grow-1">
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+            <span class="fw-bold text-primary">${esc(p.number)}</span>
+            <span class="fw-semibold">${esc(p.name)}</span>
+            ${p.status?`<span class="stat-badge" style="background:${sc}">${esc(p.status)}</span>`:''}
+            ${p.category?`<span class="badge bg-secondary rounded-pill" style="font-size:.72rem">${esc(p.category)}</span>`:''}
+          </div>
+          ${p.description?`<div class="text-muted small mb-1">${esc(p.description)}</div>`:''}
+          <div class="d-flex flex-wrap gap-3" style="font-size:.8rem;color:#555">
+            ${p.value?`<span><i class="bi bi-currency-rupee"></i>${p.value.toLocaleString('en-IN')}</span>`:''}
+            ${p.plannedHours?`<span><i class="bi bi-clock me-1"></i>Planned: <b>${p.plannedHours}h</b></span>`:''}
+            <span><i class="bi bi-clock-history me-1"></i>Actual: <b>${actH.toFixed(1)}h</b></span>
+            ${p.startDate?`<span><i class="bi bi-calendar me-1"></i>${p.startDate}</span>`:''}
+            ${p.endDate?`<span><i class="bi bi-calendar-check me-1"></i>${p.endDate}</span>`:''}
+          </div>
+          ${prog!==null?`<div class="mt-2">
+            <div class="d-flex justify-content-between" style="font-size:.75rem;margin-bottom:2px">
+              <span class="text-muted">Progress</span><span style="color:${pc};font-weight:600">${prog}%</span>
+            </div>
+            <div class="progress"><div class="progress-bar" style="width:${prog}%;background:${pc}"></div></div>
+          </div>`:''}
+        </div>
+        <div class="d-flex gap-1 ms-2">
+          <button class="btn btn-sm btn-outline-primary py-0" onclick="openProjectModal('${p.id}')" title="Edit"><i class="bi bi-pencil"></i></button>
+          <button class="btn btn-sm btn-outline-danger   py-0" onclick="deleteProject('${p.id}')" title="Delete"><i class="bi bi-trash"></i></button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════════════
+//  SESSION MODAL
+// ══════════════════════════════════════════════════════
+function openManualEntry(){
+  editSessId=null;
+  document.getElementById('sessModalTitle').textContent='Add Manual Entry';
+  fillSessSel(null);
+  const now=new Date(), ago=new Date(now-3600000);
+  sv('sStart',toLocalDT(ago)); sv('sEnd',toLocalDT(now)); sv('sNotes','');
+  sessModal.show();
+}
+function openEditSession(id){
+  editSessId=id;
+  const s=S.sessions.find(x=>x.id===id); if(!s)return;
+  document.getElementById('sessModalTitle').textContent='Edit Session';
+  fillSessSel(s.projectId);
+  sv('sStart',toLocalDT(new Date(s.startTime)));
+  sv('sEnd',  toLocalDT(new Date(s.endTime)));
+  sv('sNotes',s.notes||'');
+  sessModal.show();
+}
+function fillSessSel(sel){
+  document.getElementById('sProject').innerHTML=
+    '<option value="">— Select Project —</option>'+
+    S.projects.map(p=>`<option value="${p.id}"${p.id===sel?' selected':''}>${esc(p.number)} — ${esc(p.name)}</option>`).join('');
+}
+function saveSession(){
+  const pid=document.getElementById('sProject').value;
+  if(!pid){alert('Please select a project.');return}
+  const st=new Date(document.getElementById('sStart').value);
+  const en=new Date(document.getElementById('sEnd').value);
+  if(isNaN(st)||isNaN(en)||en<=st){alert('End time must be after start time.');return}
+  const rec={projectId:pid,startTime:st.toISOString(),endTime:en.toISOString(),
+    duration:Math.floor((en-st)/1000),date:st.toISOString().split('T')[0],notes:gv('sNotes').trim()};
+  if(editSessId){
+    const i=S.sessions.findIndex(s=>s.id===editSessId);
+    if(i>=0)S.sessions[i]={...S.sessions[i],...rec};
+  }else{
+    S.sessions.push({id:String(Date.now()),...rec});
+  }
+  save(); sessModal.hide(); renderTodaySessions();
+}
+function delSession(id){
+  if(!confirm('Delete this session?'))return;
+  S.sessions=S.sessions.filter(s=>s.id!==id); save(); renderTodaySessions();
+}
+
+// ══════════════════════════════════════════════════════
+//  DASHBOARD
+// ══════════════════════════════════════════════════════
+function setDashView(v){
+  dashView=v;
+  document.getElementById('dashDate').classList.toggle('d-none',v!=='day');
+  document.getElementById('dashMonth').classList.toggle('d-none',v!=='month');
+  document.getElementById('dailySect').classList.toggle('d-none',v!=='month');
+  document.getElementById('btnDay').className  =v==='day'  ?'btn btn-primary btn-sm':'btn btn-outline-primary btn-sm';
+  document.getElementById('btnMonth').className=v==='month'?'btn btn-primary btn-sm':'btn btn-outline-primary btn-sm';
+  renderDashboard();
+}
+function filtSess(){
+  if(dashView==='day') return S.sessions.filter(s=>s.date===document.getElementById('dashDate').value);
+  const m=document.getElementById('dashMonth').value;
+  return S.sessions.filter(s=>s.date.startsWith(m));
+}
+function renderDashboard(){
+  const sess=filtSess();
+  const totalS=sess.reduce((t,s)=>t+s.duration,0);
+  const pids=[...new Set(sess.map(s=>s.projectId))];
+  const actP=S.projects.filter(p=>p.status==='In Progress').length;
+  const doneP=S.projects.filter(p=>p.status==='Completed').length;
+  document.getElementById('kpiCards').innerHTML=[
+    {val:secsToHM(totalS),lbl:'Time Logged',color:'var(--primary)'},
+    {val:pids.length,     lbl:'Projects Worked (period)',color:'#2e7d32'},
+    {val:actP,            lbl:'In-Progress Projects',color:'#e65100'},
+    {val:doneP,           lbl:'Completed Projects',color:'#6a1b9a'}
+  ].map(k=>`<div class="col-6 col-md-3"><div class="kpi-card"><div class="val" style="color:${k.color}">${k.val}</div><div class="lbl">${k.lbl}</div></div></div>`).join('');
+
+  const ph={};
+  sess.forEach(s=>{ph[s.projectId]=(ph[s.projectId]||0)+s.duration/3600});
+  const lbls=Object.keys(ph).map(id=>{const p=S.projects.find(x=>x.id===id);return p?p.number:'?'});
+  const vals=Object.values(ph).map(h=>+h.toFixed(2));
+  const CLRS=['#1a237e','#283593','#1565c0','#0277bd','#00695c','#2e7d32','#558b2f','#f57f17','#e65100','#c62828'];
+
+  if(barChart)barChart.destroy();
+  barChart=new Chart(document.getElementById('barChart'),{type:'bar',data:{labels:lbls,datasets:[{label:'Hours',data:vals,backgroundColor:lbls.map((_,i)=>CLRS[i%CLRS.length]),borderRadius:6}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,title:{display:true,text:'Hours'}}}}});
+
+  if(dnutChart)dnutChart.destroy();
+  dnutChart=new Chart(document.getElementById('dnutChart'),{type:'doughnut',data:{labels:lbls,datasets:[{data:vals,backgroundColor:lbls.map((_,i)=>CLRS[i%CLRS.length])}]},options:{responsive:true,plugins:{legend:{position:'bottom',labels:{font:{size:10},padding:8}}}}});
+
+  if(dashView==='month'){
+    const m=document.getElementById('dashMonth').value;
+    const dim=new Date(m.split('-')[0],m.split('-')[1],0).getDate();
+    const dvals=[],dlbls=[];
+    for(let d=1;d<=dim;d++){
+      const ds=`${m}-${String(d).padStart(2,'0')}`;
+      dlbls.push(d);
+      dvals.push(+(S.sessions.filter(s=>s.date===ds).reduce((t,s)=>t+s.duration,0)/3600).toFixed(2));
+    }
+    if(dailyChart)dailyChart.destroy();
+    dailyChart=new Chart(document.getElementById('dailyChart'),{type:'bar',data:{labels:dlbls,datasets:[{label:'Hours',data:dvals,backgroundColor:'#3949ab',borderRadius:4}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,title:{display:true,text:'Hours'}}}}});
+  }
+
+  const tbody=document.getElementById('summaryBody');
+  if(!S.projects.length){tbody.innerHTML='<tr><td colspan="11" class="text-center text-muted py-3">No projects yet</td></tr>';return}
+  tbody.innerHTML=S.projects.map(p=>{
+    const actH=S.sessions.filter(s=>s.projectId===p.id).reduce((t,s)=>t+s.duration,0)/3600;
+    const planned=p.plannedHours||0, rem=Math.max(0,planned-actH);
+    const prog=planned?Math.min(100,Math.round(actH/planned*100)):null;
+    const pc=prog===null?'':(prog>=100?'#c62828':prog>=75?'#e65100':'#2e7d32');
+    const sc=stColor(p.status);
+    return `<tr>
+      <td class="fw-semibold text-primary">${esc(p.number)}</td><td>${esc(p.name)}</td>
+      <td>${p.category?`<span class="badge bg-secondary" style="font-size:.72rem">${esc(p.category)}</span>`:'—'}</td>
+      <td>${p.status?`<span class="stat-badge" style="background:${sc};font-size:.72rem">${esc(p.status)}</span>`:'—'}</td>
+      <td>${p.value?'₹'+p.value.toLocaleString('en-IN'):'—'}</td>
+      <td>${planned||'—'}</td><td><b>${actH.toFixed(1)}</b></td><td>${planned?rem.toFixed(1):'—'}</td>
+      <td>${prog!==null?`<div class="d-flex align-items-center gap-1">
+        <div class="progress flex-grow-1" style="height:8px;min-width:60px">
+          <div class="progress-bar" style="width:${prog}%;background:${pc}"></div>
+        </div>
+        <span style="font-size:.75rem;color:${pc};font-weight:600;min-width:32px">${prog}%</span>
+      </div>`:'—'}</td>
+      <td>${p.startDate||'—'}</td><td>${p.endDate||'—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════════════
+//  SETTINGS
+// ══════════════════════════════════════════════════════
+function renderSettings(){
+  renderTags('statusTags',S.settings.statuses,'removeStatus');
+  renderTags('catTags',   S.settings.categories,'removeCategory');
+}
+function renderTags(cid,items,fn){
+  document.getElementById(cid).innerHTML=items.map(v=>
+    `<span class="tag-item">${esc(v)} <span class="tag-x" onclick="${fn}(this)" data-val="${v.replace(/"/g,'&quot;')}">&times;</span></span>`
+  ).join('');
+}
+function addStatus(){
+  const el=document.getElementById('newStatus'),val=el.value.trim();if(!val)return;
+  if(S.settings.statuses.includes(val)){alert('Already exists.');return}
+  S.settings.statuses.push(val);el.value='';save();renderSettings();
+}
+function removeStatus(el){
+  const v=el.dataset.val;if(!confirm(`Remove "${v}"?`))return;
+  S.settings.statuses=S.settings.statuses.filter(x=>x!==v);save();renderSettings();
+}
+function addCategory(){
+  const el=document.getElementById('newCat'),val=el.value.trim();if(!val)return;
+  if(S.settings.categories.includes(val)){alert('Already exists.');return}
+  S.settings.categories.push(val);el.value='';save();renderSettings();
+}
+function removeCategory(el){
+  const v=el.dataset.val;if(!confirm(`Remove "${v}"?`))return;
+  S.settings.categories=S.settings.categories.filter(x=>x!==v);save();renderSettings();
+}
+
+// ══════════════════════════════════════════════════════
+//  EXPORT
+// ══════════════════════════════════════════════════════
+function exportJSON(){dlBlob(new Blob([JSON.stringify({projects:S.projects,sessions:S.sessions},null,2)],{type:'application/json'}),`pss-${today()}.json`)}
+function exportCSV(){
+  const rows=[['ID','Project #','Project Name','Date','Start','End','Duration (h)','Notes']];
+  S.sessions.forEach(s=>{
+    const p=S.projects.find(x=>x.id===s.projectId);
+    rows.push([s.id,p?.number||'',p?.name||'',s.date,fmtT(s.startTime),fmtT(s.endTime),(s.duration/3600).toFixed(2),s.notes||'']);
+  });
+  dlBlob(new Blob([rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n')],{type:'text/csv'}),`pss-sessions-${today()}.csv`);
+}
+function dlBlob(b,n){const u=URL.createObjectURL(b);Object.assign(document.createElement('a'),{href:u,download:n}).click();URL.revokeObjectURL(u)}
+function clearAll(){
+  if(!confirm('Delete ALL data? Cannot be undone.'))return;
+  if(!confirm('Final confirmation — delete everything?'))return;
+  localStorage.removeItem('pss_v4');
+  S=clone(DEFS);
+  if(masterIv){clearInterval(masterIv);masterIv=null;}
+  renderSlots(); renderTodaySessions(); renderProjects(); renderSettings();
+}
+
+// ══════════════════════════════════════════════════════
+//  HELPERS
+// ══════════════════════════════════════════════════════
+function secsToHMS(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;return`${p2(h)}:${p2(m)}:${p2(sec)}`}
+function secsToHM(s){return`${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`}
+function fmtT(iso){return new Date(iso).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}
+function toLocalDT(d){return`${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}T${p2(d.getHours())}:${p2(d.getMinutes())}`}
+function p2(n){return String(n).padStart(2,'0')}
+function today(){return new Date().toISOString().split('T')[0]}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function stColor(s){return{'Planning':'#78909c','In Progress':'#1565c0','On Hold':'#e65100','Completed':'#2e7d32','Cancelled':'#b71c1c'}[s]||'#9e9e9e'}
+function gv(id){return document.getElementById(id)?.value||''}
+function sv(id,val){const el=document.getElementById(id);if(el)el.value=val}
+function setSel(id,items,cur,ph){
+  const el=document.getElementById(id);if(!el)return;
+  el.innerHTML=`<option value="">${ph}</option>`+items.map(x=>`<option${x===cur?' selected':''}>${esc(x)}</option>`).join('');
+}
+
+// ══════════════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded',()=>{
+  load();
+
+  // Modal instances created once
+  projModal=new bootstrap.Modal(document.getElementById('projectModal'));
+  sessModal=new bootstrap.Modal(document.getElementById('sessionModal'));
+  document.getElementById('projModalClose').onclick=()=>projModal.hide();
+  document.getElementById('projCancelBtn').onclick =()=>projModal.hide();
+  document.getElementById('sessModalClose').onclick=()=>sessModal.hide();
+  document.getElementById('sessCancelBtn').onclick =()=>sessModal.hide();
+
+  // Default dates
+  const td=today();
+  document.getElementById('dashDate').value =td;
+  document.getElementById('dashMonth').value=td.substring(0,7);
+
+  // Clock
+  tick(); setInterval(tick,1000);
+
+  // If any timer was running when page was closed, resume master tick
+  if(S.activeTimers.some(t=>t.state==='running')) startMasterTick();
+
+  // Render everything
+  renderSlots();
+  renderTodaySessions();
+});
+</script>
+</body>
+</html>
