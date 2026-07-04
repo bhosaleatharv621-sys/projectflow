@@ -7,7 +7,7 @@ import { SyncStatus } from "@/components/SyncStatus";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { currencySymbol, setCurrencySymbol } from "@/lib/constants";
-import { listCategories, listProjects, listSessions } from "@/lib/api";
+import { listCategories, listMembers, listProjects, listSessionsSince } from "@/lib/api";
 import { downloadText, sessionsToCsv } from "@/lib/export";
 import { todayKey } from "@/lib/time";
 
@@ -43,8 +43,13 @@ export default function SettingsPage() {
   async function exportAll() {
     setExporting(true);
     try {
-      const [p, c, s] = await Promise.all([listProjects(), listCategories(), listSessions()]);
-      downloadText(`projectflow-sessions-${todayKey()}.csv`, sessionsToCsv(s, p, c));
+      const [p, c, s, m] = await Promise.all([
+        listProjects(),
+        listCategories(),
+        listSessionsSince(null, 10000),
+        listMembers(),
+      ]);
+      downloadText(`projectflow-sessions-${todayKey()}.csv`, sessionsToCsv(s, p, c, m));
     } finally {
       setExporting(false);
     }

@@ -17,6 +17,7 @@ export function AddToTodayModal({
   categories,
   existingIds,
   startPosition,
+  userId,
 }: {
   open: boolean;
   onClose: () => void;
@@ -25,6 +26,7 @@ export function AddToTodayModal({
   categories: Category[];
   existingIds: Set<string>;
   startPosition: number;
+  userId: string;
 }) {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -62,7 +64,7 @@ export function AddToTodayModal({
       const day = todayKey();
       let pos = startPosition;
       for (const id of selected) {
-        await track(addToToday(id, day, pos++));
+        await track(addToToday(userId, id, day, pos++));
       }
       setSelected(new Set());
       setQuery("");

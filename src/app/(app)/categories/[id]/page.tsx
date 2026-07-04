@@ -1,81 +1,72 @@
 "use client";
 
+// A category's project list — ADMIN ONLY management view.
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Plus, Loader2, Play, CalendarPlus, Pencil, Trash2, Search } from "lucide-react";
+import { ArrowLeft, Plus, Loader2, Pencil, Trash2, Search } from "lucide-react";
 import { CategoryIcon } from "@/components/CategoryIcon";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { BurnBadge } from "@/components/ui/BurnBadge";
 import { ProjectFormModal } from "@/components/projects/ProjectFormModal";
+import { useMember } from "@/components/MemberProvider";
 import {
-  addToToday,
   deleteProject,
+  getProjectTotals,
   listCategories,
   listProjectsByCategory,
-  listSessions,
-  listTodaySelections,
-  startSession,
 } from "@/lib/api";
 import { currencySymbol } from "@/lib/constants";
-import {
-  burnStatus,
-  percentComplete,
-  secsToHours,
-  todayKey,
-  totalSpentSeconds,
-} from "@/lib/time";
+import { burnStatus, percentComplete, secsToHours } from "@/lib/time";
 import { track } from "@/lib/sync";
-import type { Category, Project, TimeSession } from "@/lib/types";
+import type { Category, Project } from "@/lib/types";
 
 type SortKey = "name" | "deadline" | "percent" | "recent";
 
 export default function CategoryDetailPage({ params }: { params: { id: string } }) {
+  const member = useMember();
   const router = useRouter();
+  const isAdmin = member.role === "admin";
+
   const [categories, setCategories] = useState<Category[]>([]);
   const [category, setCategory] = useState<Category | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [sessions, setSessions] = useState<TimeSession[]>([]);
+  const [totals, setTotals] = useState<Map<string, number>>(new Map());
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortKey>("recent");
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Project | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isAdmin) router.replace("/projects");
+  }, [isAdmin, router]);
 
   const reload = useCallback(async () => {
-    const [cats, p, s] = await Promise.all([
+    // PERF: pre-aggregated totals from the view — no raw session fetch.
+    const [cats, p, t] = await Promise.all([
       listCategories(),
       listProjectsByCategory(params.id),
-      listSessions(),
+      getProjectTotals(),
     ]);
     setCategories(cats);
     setCategory(cats.find((c) => c.id === params.id) ?? null);
     setProjects(p);
-    setSessions(s);
+    setTotals(t);
     setLoading(false);
   }, [params.id]);
 
   useEffect(() => {
-    reload();
-  }, [reload]);
-
-  const sessionsByProject = useMemo(() => {
-    const map = new Map<string, TimeSession[]>();
-    for (const s of sessions) {
-      const arr = map.get(s.project_id) ?? [];
-      arr.push(s);
-      map.set(s.project_id, arr);
-    }
-    return map;
-  }, [sessions]);
+    if (isAdmin) reload();
+  }, [isAdmin, reload]);
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
     const items = projects
       .filter((p) => !q || p.name.toLowerCase().includes(q) || p.project_number.toLowerCase().includes(q))
       .map((p) => {
-        const total = totalSpentSeconds(sessionsByProject.get(p.id) ?? []);
+        const total = totals.get(p.id) ?? 0;
         return { project: p, total, pct: percentComplete(total, p.target_hours) };
       });
     items.sort((a, b) => {
@@ -91,39 +82,15 @@ export default function CategoryDetailPage({ params }: { params: { id: string } 
       }
     });
     return items;
-  }, [projects, sessionsByProject, query, sort]);
-
-  async function onStartTimer(p: Project) {
-    setBusyId(p.id);
-    try {
-      const day = todayKey();
-      const todays = await listTodaySelections(day);
-      if (!todays.some((t) => t.project_id === p.id)) {
-        await track(addToToday(p.id, day, todays.length));
-      }
-      await track(startSession(p.id));
-      router.push("/today");
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function onAddToday(p: Project) {
-    setBusyId(p.id);
-    try {
-      const day = todayKey();
-      const todays = await listTodaySelections(day);
-      await track(addToToday(p.id, day, todays.length));
-    } finally {
-      setBusyId(null);
-    }
-  }
+  }, [projects, totals, query, sort]);
 
   async function onDelete(p: Project) {
     if (!confirm(`Delete "${p.name}" and all its time history?`)) return;
     await track(deleteProject(p.id));
     reload();
   }
+
+  if (!isAdmin) return null;
 
   if (loading) {
     return (
@@ -234,22 +201,6 @@ export default function CategoryDetailPage({ params }: { params: { id: string } 
                   </div>
 
                   <div className="flex shrink-0 gap-1">
-                    <button
-                      className="btn btn-ghost px-2.5 py-1.5"
-                      title="Start timer now"
-                      onClick={() => onStartTimer(p)}
-                      disabled={busyId === p.id}
-                    >
-                      {busyId === p.id ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}
-                    </button>
-                    <button
-                      className="btn btn-ghost px-2.5 py-1.5"
-                      title="Add to Today"
-                      onClick={() => onAddToday(p)}
-                      disabled={busyId === p.id}
-                    >
-                      <CalendarPlus size={15} />
-                    </button>
                     <button
                       className="btn btn-ghost px-2.5 py-1.5"
                       title="Edit"

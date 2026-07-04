@@ -13,10 +13,6 @@ import {
   secsToClock,
   secsToHM,
   secsToHours,
-  sessionStartedOn,
-  todayContributionSeconds,
-  todayKey,
-  totalSpentSeconds,
 } from "@/lib/time";
 import type { Category, Project, TimeSession } from "@/lib/types";
 
@@ -25,10 +21,12 @@ export type CardState = "running" | "paused" | "idle";
 export function TodayCard({
   project,
   category,
-  sessions,
+  todaySessions,
+  totalSeconds,
   now,
   state,
   busy,
+  isAdmin,
   onStart,
   onPause,
   onStop,
@@ -36,28 +34,29 @@ export function TodayCard({
 }: {
   project: Project;
   category: Category | null;
-  sessions: TimeSession[]; // this project's sessions only
+  todaySessions: TimeSession[]; // the CALLER's sessions on this project today
+  totalSeconds: number; // lifetime total (only rendered for the admin)
   now: number;
   state: CardState;
   busy: boolean;
+  isAdmin: boolean; // progress vs target is an admin-only statistic
   onStart: () => void;
   onPause: () => void;
   onStop: () => void;
   onRemove: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const day = todayKey();
 
-  const today = todayContributionSeconds(sessions, day, now);
-  const total = totalSpentSeconds(sessions, now);
-  const pct = percentComplete(total, project.target_hours);
-  const burn = burnStatus(project, total);
+  const today = todaySessions.reduce((sum, s) => sum + liveElapsedSeconds(s, now), 0);
+  const liveTotal =
+    totalSeconds + todaySessions.filter((s) => !s.end_time).reduce((sum, s) => sum + liveElapsedSeconds(s, now), 0);
+  const pct = percentComplete(liveTotal, project.target_hours);
+  const burn = burnStatus(project, liveTotal);
 
-  const todaysCycles = sessions
-    .filter((s) => sessionStartedOn(s, day))
-    .sort((a, b) => a.start_time.localeCompare(b.start_time));
+  const cycles = [...todaySessions].sort((a, b) => a.start_time.localeCompare(b.start_time));
 
-  const barColor = pct >= 100 ? "#059669" : burn.tone === "red" ? "#dc2626" : category?.color ?? "var(--brand)";
+  const barColor =
+    pct >= 100 ? "#059669" : burn.tone === "red" ? "#dc2626" : category?.color ?? "var(--brand)";
 
   return (
     <div
@@ -106,16 +105,23 @@ export function TodayCard({
             {secsToClock(today)}
           </span>
         </div>
-        <div className="muted text-sm">
-          Total {secsToHours(total).toFixed(1)}h / {project.target_hours}h ·{" "}
-          <span className="font-medium">{Math.round(pct)}%</span>
-        </div>
-        {project.deadline ? <BurnBadge status={burn} /> : null}
+        {/* Progress vs target is admin-only (project completion statistics). */}
+        {isAdmin && (
+          <>
+            <div className="muted text-sm">
+              Total {secsToHours(liveTotal).toFixed(1)}h / {project.target_hours}h ·{" "}
+              <span className="font-medium">{Math.round(pct)}%</span>
+            </div>
+            {project.deadline ? <BurnBadge status={burn} /> : null}
+          </>
+        )}
       </div>
 
-      <div className="mt-2">
-        <ProgressBar percent={pct} color={barColor} />
-      </div>
+      {isAdmin && (
+        <div className="mt-2">
+          <ProgressBar percent={pct} color={barColor} />
+        </div>
+      )}
 
       <div className="mt-3 flex items-center justify-between gap-2">
         <div className="flex gap-2">
@@ -141,28 +147,31 @@ export function TodayCard({
           )}
         </div>
 
-        {todaysCycles.length > 0 && (
+        {cycles.length > 0 && (
           <button
             className="inline-flex items-center gap-1 text-xs muted hover:text-brand"
             onClick={() => setExpanded((v) => !v)}
           >
-            {todaysCycles.length} cycle{todaysCycles.length === 1 ? "" : "s"} today
+            {cycles.length} cycle{cycles.length === 1 ? "" : "s"} today
             <ChevronDown size={14} className={`transition ${expanded ? "rotate-180" : ""}`} />
           </button>
         )}
       </div>
 
-      {expanded && todaysCycles.length > 0 && (
+      {expanded && cycles.length > 0 && (
         <div className="mt-3 space-y-1 border-t pt-3" style={{ borderColor: "var(--border)" }}>
-          {todaysCycles.map((c) => {
+          {cycles.map((c) => {
             const dur = liveElapsedSeconds(c, now);
             const running = !c.end_time;
             return (
-              <div key={c.id} className="flex items-center justify-between text-xs">
-                <span className="muted">
-                  {formatClockTime(c.start_time)} – {running ? "now" : formatClockTime(c.end_time!)}
-                </span>
-                <span className={`font-mono ${running ? "text-emerald-500" : ""}`}>{secsToHM(dur)}</span>
+              <div key={c.id} className="text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="muted">
+                    {formatClockTime(c.start_time)} – {running ? "now" : formatClockTime(c.end_time!)}
+                  </span>
+                  <span className={`font-mono ${running ? "text-emerald-500" : ""}`}>{secsToHM(dur)}</span>
+                </div>
+                {c.notes && <p className="muted mt-0.5 italic">“{c.notes}”</p>}
               </div>
             );
           })}

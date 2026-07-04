@@ -34,6 +34,8 @@ export async function middleware(request: NextRequest) {
   const isProtected =
     path === "/" ||
     path.startsWith("/today") ||
+    path.startsWith("/projects") ||
+    path.startsWith("/team") ||
     path.startsWith("/categories") ||
     path.startsWith("/reports") ||
     path.startsWith("/settings");

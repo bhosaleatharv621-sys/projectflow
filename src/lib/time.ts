@@ -45,6 +45,46 @@ export function todayKey(): string {
   return localDateKey(new Date());
 }
 
+/** Local midnight of today, as a Date. */
+export function startOfToday(now: Date = new Date()): Date {
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
+// --- Range filters (Today / Week / Month / Year / All) ----------------------
+
+export type RangeKey = "today" | "week" | "month" | "year" | "all";
+
+export const RANGE_LABELS: Record<RangeKey, string> = {
+  today: "Today",
+  week: "Week",
+  month: "Month",
+  year: "Year",
+  all: "All",
+};
+
+/**
+ * Calendar-based lower bound for a range in the device's local timezone.
+ * null = unbounded ("All"). Week starts on Monday.
+ */
+export function rangeStart(range: RangeKey, now: Date = new Date()): Date | null {
+  const day = startOfToday(now);
+  switch (range) {
+    case "today":
+      return day;
+    case "week": {
+      const dow = (day.getDay() + 6) % 7; // Mon=0 .. Sun=6
+      day.setDate(day.getDate() - dow);
+      return day;
+    }
+    case "month":
+      return new Date(now.getFullYear(), now.getMonth(), 1);
+    case "year":
+      return new Date(now.getFullYear(), 0, 1);
+    case "all":
+      return null;
+  }
+}
+
 /** "9:12 AM" style local time from an ISO timestamp. */
 export function formatClockTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, {

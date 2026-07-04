@@ -1,7 +1,9 @@
-// Native CSV generation (no dependency). One row per cycle.
-// Excel (.xlsx) export via SheetJS is a Phase 3 enhancement.
+// Native CSV generation (no dependency). One row per work cycle, including
+// the person and the work notes captured at stop time. Rows are whatever the
+// caller's RLS allows — an employee's export can never contain the admin's
+// sessions.
 
-import type { Category, Project, TimeSession } from "./types";
+import type { Category, Member, Project, TimeSession } from "./types";
 import { secsToClock } from "./time";
 
 function csvCell(v: string | number): string {
@@ -13,18 +15,22 @@ export function sessionsToCsv(
   sessions: TimeSession[],
   projects: Project[],
   categories: Category[],
+  members: Member[] = [],
 ): string {
   const projById = new Map(projects.map((p) => [p.id, p]));
   const catById = new Map(categories.map((c) => [c.id, c]));
+  const memberById = new Map(members.map((m) => [m.user_id, m]));
 
   const header = [
     "Date",
+    "Person",
     "Category",
     "Project Number",
     "Project Name",
     "Session Start",
     "Session End",
     "Duration (hh:mm:ss)",
+    "Notes",
   ];
 
   const rows = sessions
@@ -35,12 +41,14 @@ export function sessionsToCsv(
       const c = p ? catById.get(p.category_id) : undefined;
       return [
         new Date(s.start_time).toLocaleDateString(),
+        memberById.get(s.user_id)?.display_name ?? "",
         c?.name ?? "",
         p?.project_number ?? "",
         p?.name ?? "",
         new Date(s.start_time).toLocaleString(),
         s.end_time ? new Date(s.end_time).toLocaleString() : "",
         secsToClock(s.duration_seconds ?? 0),
+        s.notes ?? "",
       ];
     });
 

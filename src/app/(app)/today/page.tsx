@@ -1,53 +1,73 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { CalendarPlus, Loader2 } from "lucide-react";
 import { TodayCard, type CardState } from "@/components/today/TodayCard";
 import { AddToTodayModal } from "@/components/today/AddToTodayModal";
+import { SessionNotesModal } from "@/components/today/SessionNotesModal";
+import { useMember } from "@/components/MemberProvider";
 import {
   addToToday,
+  getMyOpenSession,
+  getProjectTotals,
   listCategories,
+  listMySessionsSince,
   listProjects,
-  listSessions,
   listTodaySelections,
   removeFromToday,
   startSession,
   stopActiveSession,
 } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
-import { secsToHM, todayContributionSeconds, todayKey } from "@/lib/time";
+import { liveElapsedSeconds, startOfToday, todayKey } from "@/lib/time";
+import { secsToHM } from "@/lib/time";
 import { track } from "@/lib/sync";
 import type { Category, DailySelection, Project, TimeSession } from "@/lib/types";
 
 export default function TodayPage() {
+  const member = useMember();
+  const isAdmin = member.role === "admin";
+
   const [selections, setSelections] = useState<DailySelection[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [sessions, setSessions] = useState<TimeSession[]>([]);
+  const [mySessions, setMySessions] = useState<TimeSession[]>([]);
+  const [openSession, setOpenSession] = useState<TimeSession | null>(null);
+  const [totals, setTotals] = useState<Map<string, number>>(new Map());
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(() => Date.now());
   const [addOpen, setAddOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
-  // Projects the user explicitly Stopped this session -> show "Start" (fresh
+  const [notesFor, setNotesFor] = useState<TimeSession | null>(null);
+  // Projects the user explicitly Stopped this visit -> show "Start" (fresh
   // cycle at 0:00) instead of "Resume". Cleared when a new cycle begins.
   const [stoppedIds, setStoppedIds] = useState<Set<string>>(new Set());
 
   const day = todayKey();
 
   const reload = useCallback(async () => {
-    const [sel, proj, cats, sess] = await Promise.all([
+    // PERF: everything here is scoped — my selections for today, MY sessions
+    // since local midnight, my single open session, and (admin only) the
+    // pre-aggregated lifetime totals. The old code fetched every session in
+    // the database and reduced in the browser.
+    const sinceIso = startOfToday().toISOString();
+    const [sel, proj, cats, sess, open, tot] = await Promise.all([
       listTodaySelections(day),
       listProjects(),
       listCategories(),
-      listSessions(),
+      listMySessionsSince(member.userId, sinceIso),
+      getMyOpenSession(member.userId),
+      isAdmin ? getProjectTotals() : Promise.resolve(new Map<string, number>()),
     ]);
     setSelections(sel);
     setProjects(proj);
     setCategories(cats);
-    setSessions(sess);
+    setMySessions(sess);
+    setOpenSession(open);
+    setTotals(tot);
     setLoading(false);
-  }, [day]);
+  }, [day, member.userId, isAdmin]);
 
   // Resolve true state from the server on load, and again on focus/online.
   useEffect(() => {
@@ -61,7 +81,7 @@ export default function TodayPage() {
     };
   }, [reload]);
 
-  // Live cross-device reflection: reload when sessions/selections change.
+  // Live cross-device reflection.
   useEffect(() => {
     const supabase = createClient();
     const channel = supabase
@@ -74,8 +94,6 @@ export default function TodayPage() {
     };
   }, [reload]);
 
-  const openSession = useMemo(() => sessions.find((s) => !s.end_time) ?? null, [sessions]);
-
   // Tick every second only while a timer is open.
   useEffect(() => {
     if (!openSession) return;
@@ -85,30 +103,33 @@ export default function TodayPage() {
 
   const sessionsByProject = useMemo(() => {
     const map = new Map<string, TimeSession[]>();
-    for (const s of sessions) {
+    for (const s of mySessions) {
       const arr = map.get(s.project_id) ?? [];
       arr.push(s);
       map.set(s.project_id, arr);
     }
     return map;
-  }, [sessions]);
+  }, [mySessions]);
 
   const projectById = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects]);
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
 
   const cards = useMemo(
-    () =>
-      selections
-        .map((sel) => projectById.get(sel.project_id))
-        .filter((p): p is Project => !!p),
+    () => selections.map((sel) => projectById.get(sel.project_id)).filter((p): p is Project => !!p),
     [selections, projectById],
   );
 
-  const totalToday = useMemo(() => todayContributionSeconds(sessions, day, now), [sessions, day, now]);
+  const totalToday = useMemo(
+    () => mySessions.reduce((sum, s) => sum + liveElapsedSeconds(s, now), 0),
+    [mySessions, now],
+  );
 
   function cardState(projectId: string): CardState {
     if (openSession?.project_id === projectId) return "running";
-    const todaySecs = todayContributionSeconds(sessionsByProject.get(projectId) ?? [], day, now);
+    const todaySecs = (sessionsByProject.get(projectId) ?? []).reduce(
+      (sum, s) => sum + liveElapsedSeconds(s, now),
+      0,
+    );
     if (todaySecs > 0 && !stoppedIds.has(projectId)) return "paused";
     return "idle";
   }
@@ -139,15 +160,18 @@ export default function TodayPage() {
     }
   }
 
+  // Stop = close the session immediately (no time accrues while typing),
+  // then open the work-notes modal for the just-closed session.
   async function onStop(projectId: string) {
-    if (!confirm("Stop this project? Your time so far is saved. The next Start begins a new cycle at 0:00.")) return;
     setBusyId(projectId);
     try {
+      let closed: TimeSession | null = null;
       if (openSession?.project_id === projectId) {
-        await track(stopActiveSession());
+        closed = await track(stopActiveSession());
       }
       setStoppedIds((prev) => new Set(prev).add(projectId));
       await reload();
+      if (closed) setNotesFor(closed);
     } finally {
       setBusyId(null);
     }
@@ -171,15 +195,19 @@ export default function TodayPage() {
     month: "short",
   });
 
+  const notesProject = notesFor ? projectById.get(notesFor.project_id) : null;
+
   return (
     <div>
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Today</h1>
-          <p className="muted mt-0.5 text-sm">{dateLabel}</p>
+          <p className="muted mt-0.5 text-sm">
+            {dateLabel} · {member.displayName}
+          </p>
         </div>
         <div className="text-right">
-          <p className="muted text-xs">Total worked today</p>
+          <p className="muted text-xs">My time today</p>
           <p className="font-mono text-xl font-bold">{secsToHM(totalToday)}</p>
         </div>
       </div>
@@ -192,11 +220,11 @@ export default function TodayPage() {
         <div className="card p-8 text-center">
           <p className="font-semibold">Nothing planned yet</p>
           <p className="muted mx-auto mt-1 max-w-sm text-sm">
-            Add the handful of projects you want to work on today. Today starts fresh each morning.
+            Add the projects you want to work on today. Today starts fresh each morning.
           </p>
           {projects.length === 0 ? (
-            <Link href="/categories" className="btn btn-primary mx-auto mt-4 w-fit">
-              Create your first project
+            <Link href="/projects" className="btn btn-primary mx-auto mt-4 w-fit">
+              Browse projects
             </Link>
           ) : (
             <button className="btn btn-primary mx-auto mt-4 w-fit" onClick={() => setAddOpen(true)}>
@@ -211,10 +239,12 @@ export default function TodayPage() {
               key={p.id}
               project={p}
               category={categoryById.get(p.category_id) ?? null}
-              sessions={sessionsByProject.get(p.id) ?? []}
+              todaySessions={sessionsByProject.get(p.id) ?? []}
+              totalSeconds={totals.get(p.id) ?? 0}
               now={now}
               state={cardState(p.id)}
               busy={busyId === p.id}
+              isAdmin={isAdmin}
               onStart={() => onStart(p.id)}
               onPause={() => onPause(p.id)}
               onStop={() => onStop(p.id)}
@@ -240,6 +270,16 @@ export default function TodayPage() {
         categories={categories}
         existingIds={existingIds}
         startPosition={selections.length}
+        userId={member.userId}
+      />
+
+      <SessionNotesModal
+        session={notesFor}
+        projectName={notesProject ? `${notesProject.project_number} — ${notesProject.name}` : ""}
+        onClose={() => {
+          setNotesFor(null);
+          reload();
+        }}
       />
     </div>
   );
