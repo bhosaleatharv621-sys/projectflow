@@ -1,136 +1,59 @@
-# ProjectFlow — Personal Cross-Device Project Time Tracker
+# ProjectFlow — Organization Time Tracking Platform
 
-A personal, single-user time tracker built around a **Category → Project → Today's Timetable → Work Session** workflow. Organize a large batch of projects, curate a short "Today" list each morning, run **one live timer at a time**, and see exactly where your time goes.
+Time tracking for **ESS – Electric Sciences & Solutions Pvt. Ltd.** One organization, one administrator (**Prasad Gore**), any number of employees. Built with **Next.js 14 (App Router) + TypeScript + Tailwind + Supabase**; all authorization is enforced in Postgres with Row-Level Security — the UI only decides what to *show*, the database decides what is *allowed*.
 
-Built with **Next.js (App Router) + TypeScript + Tailwind + Supabase**. Data lives in cloud Postgres scoped privately to your account (Row-Level Security), so every device — phone, tablet, laptop — stays in sync.
+## Roles
 
-> **Status: Phase 1 (core).** Auth, Categories CRUD, Projects CRUD, and Today's Timetable with the single-active-timer rule are implemented, plus a basic Reports view and CSV export. Realtime cross-device reflection and a sync-status indicator are wired in. Richer analytics (Recharts, heatmap, weekly stacked bars), Excel export, offline queue, and PWA polish are later phases — see the roadmap.
+| Capability | Admin | Employee |
+|---|---|---|
+| Create / edit / delete categories & projects | ✓ | ✗ (blocked by RLS) |
+| Browse & search org projects | ✓ | ✓ |
+| Start / pause / resume / stop timers | ✓ | ✓ |
+| Work notes when stopping a timer | ✓ | ✓ |
+| See colleagues' time | everyone's | everyone's **except the admin's** (RLS-enforced) |
+| Project completion (worked / target / %) | ✓ | ✗ (not rendered; true totals unobtainable — admin sessions are invisible to employees) |
 
----
+**The admin is data, not code.** Exactly one admin per org is enforced by a partial unique index. The **first account to sign up becomes the admin** (seeded display name "Prasad Gore"). **Every later signup creates a *pending access request*** — it appears in the admin's Team page, where the admin approves (user joins as employee) or rejects it. Until approved, the account sees only a "pending approval" screen and RLS returns zero organization rows to it. Role changes are blocked through the API by a trigger — changing the admin is a deliberate act in the Supabase SQL editor:
 
-## 1. What works today
-
-- **Auth** — email/password or magic link (Supabase Auth). Single account, no teams.
-- **Categories** — unlimited, each with a lucide icon + accent color used consistently everywhere.
-- **Projects** — number (auto-suggested, editable), name, cost (₹ by default), target hours, optional deadline, notes. Fast **"Save & add another"** flow for bulk entry.
-- **Today's Timetable** — curate the day via global search + multi-select; one card per project.
-- **Single active timer** — starting a project auto-pauses whatever was running, enforced **server-side** in one transaction (`start_session` RPC) so two devices can't disagree.
-- **Pause vs. Stop** — both save your time (non-destructive). Pause is resumable; Stop returns the card to idle and the next Start begins a fresh cycle at 0:00.
-- **Live metrics** — today's contribution, total vs. target, % complete, and an **on-time / behind-schedule** badge (only when a deadline is set).
-- **Today's cycles** — expand a card to see each start–end chunk for the day.
-- **Project detail** — full session history, remaining hours, a plain-language pace tip, edit / mark complete / delete.
-- **Reports** — Today / This-week totals, time-by-project bars, CSV export.
-- **Sync status indicator** + Realtime subscriptions for live cross-device updates.
-
-## 2. Business logic (implemented exactly)
-
-See `src/lib/time.ts`:
-
-- `elapsed = now − session.start_time` (computed client-side; **never** written per-tick).
-- `todayContribution = Σ(durations of sessions started today) + live elapsed if open today`.
-- `totalSpent = Σ(all session durations) + live elapsed if running`.
-- `percentComplete = totalSpent(hours) / target_hours` (allowed to exceed 100%; the bar fill is capped visually).
-- **On-time badge:** `expectedProgress = clamp(daysElapsed / totalDays, 0, 1)`; on track when `percentComplete ≥ expectedProgress`; amber when on track but the deadline is near with a thin buffer; red when behind or overdue.
-
-**Timezone rule:** everything uses the device's local timezone, and a cycle belongs to the local calendar day it **started** on (so an 11:58pm→12:05am session counts entirely toward the start day).
-
----
-
-## 3. Setup
-
-### Prerequisites
-- Node 18+ (tested on Node 22)
-- A free [Supabase](https://supabase.com) project
-
-### a. Install
-```bash
-npm install
+```sql
+update members set role = 'employee' where role = 'admin';
+update members set role = 'admin' where user_id = '<new-admin-user-id>';
 ```
 
-### b. Create the database
-In your Supabase project: **SQL Editor → New query**, paste the contents of
-[`supabase/schema.sql`](supabase/schema.sql), and run it. This creates the four
-tables, Row-Level Security policies, the atomic timer RPCs, and enables Realtime.
+## Setup
 
-### c. Configure environment
-```bash
-cp .env.local.example .env.local
+1. `npm install`
+2. Create a [Supabase](https://supabase.com) project (Mumbai / `ap-south-1` recommended for India — region latency was a large part of slow writes).
+3. **SQL Editor → run in order:**
+   - `supabase/migrations/0001_initial_schema.sql`
+   - `supabase/migrations/0002_organizations.sql`
+   - `supabase/migrations/0003_member_approval_flow.sql`
+   (Existing installs run only the migrations they haven't applied yet — data is preserved at every step; `0002` backfills existing rows into the organization, `0003` adds the approval flow without touching members.)
+4. `cp .env.local.example .env.local` and fill in Project Settings → API values.
+5. Supabase → Authentication → URL Configuration: add `http://localhost:3000/auth/callback` (and your production callback).
+6. `npm run dev` → **Prasad Gore signs up first** (becomes admin) → employees sign up after and wait on the pending screen until the admin approves them from **Team → Pending access requests**.
+
+## Screens
+
+- **Today** — personal timer workspace. One live timer per person (server-enforced); Stop opens the **work-notes modal** (time is saved first, notes attach after — skippable, never lossy).
+- **Projects** — org-wide browser with instant search (in-memory over one small query) + category/sort filters. Admin: create/edit/delete, live completion bars, link to Categories management.
+- **Team** — who's working right now (live, ticking), time per person, recent sessions with notes; filtered by **Today / Week / Month / Year / All**. Employees never receive the admin's rows.
+- **Reports** — range-filtered totals per project + CSV export; admin additionally sees the completion table (worked / target / % / remaining).
+- **Settings** — currency, theme, full CSV export, sign out.
+
+## Architecture notes
+
+- `supabase/migrations/0002_organizations.sql` — organizations, members, role-aware RLS, timer RPCs, aggregate view/RPCs, indexes, signup trigger, escalation guard.
+- `src/lib/api.ts` — all data access. Writes are single round-trips (identity comes from `auth.uid()` / `current_org_id()` column defaults — no `getUser()` pre-flight). Reads are range-bounded or pre-aggregated (`project_totals` view, `session_*_totals` RPCs) — the client never downloads unbounded session history.
+- `src/components/MemberProvider.tsx` — identity/role resolved once per page load in the server layout, consumed everywhere via `useMember()`.
+- `src/lib/time.ts` — timer math + range helpers. A cycle belongs to the local day it started.
+
 ```
-Fill in from **Supabase → Project Settings → API**:
-```
-NEXT_PUBLIC_SUPABASE_URL=https://<your-ref>.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=<your-anon-public-key>
-```
-
-### d. (Auth) redirect URLs
-In **Supabase → Authentication → URL Configuration**, add your site URL and
-`http://localhost:3000/auth/callback` (and your production
-`https://<domain>/auth/callback`) to the redirect allow-list. For quick local
-testing you can disable "Confirm email" under Authentication → Providers → Email.
-
-### e. Run
-```bash
-npm run dev      # http://localhost:3000
-npm run build    # production build
-npm run lint
-npm run typecheck
-```
-
-If Supabase env vars are missing, the app still builds and the login screen
-shows a "connect Supabase" notice instead of crashing.
-
-### Deploy
-Deploy to **Vercel**, set the two `NEXT_PUBLIC_*` env vars in the project
-settings, and add the production `/auth/callback` redirect URL in Supabase.
-
----
-
-## 4. Data model
-
-| Table | Purpose |
-|---|---|
-| `categories` | user-defined containers (name, icon, color) |
-| `projects` | number, name, cost, target_hours, deadline, status, notes |
-| `time_sessions` | one cycle: `start_time` → `end_time` + `duration_seconds` |
-| `daily_selections` | which projects are on Today's Timetable for a given local day |
-
-All derived values (today's contribution, total spent, % complete, burn status)
-are computed from `time_sessions` — never stored redundantly, to avoid drift.
-
-### Single-active-timer (server-side)
-`start_session(project_id)` runs in one transaction: close any open session for
-the user (Pause semantics), then open a fresh session for the requested project.
-`stop_active_session()` closes the caller's open session. Both are
-`SECURITY DEFINER` and re-assert `auth.uid()`.
-
----
-
-## 5. Project structure
-```
-supabase/schema.sql          Postgres schema, RLS, atomic timer RPCs
-src/
-  app/
-    login/                   auth (email/password + magic link)
-    auth/callback/           code exchange
-    (app)/                   authenticated shell
-      today/                 Today's Timetable (core)
-      categories/            grid + [id] project list
-      projects/[id]/         project detail + history
-      reports/               totals + CSV export
-      settings/              account, currency, theme, export
-  components/                UI + feature components
-  lib/
-    time.ts                  all business-logic formulas
-    api.ts                   typed Supabase data access
-    supabase/                browser + server clients, env
-    sync.ts                  sync-status signal
-    export.ts                CSV generation
-legacy/index.html            the original single-file prototype (kept for reference)
+npm run dev / build / lint / typecheck
 ```
 
-## 6. Roadmap (next phases)
-- **Phase 2** — offline write queue + conflict resolution; harden resolve-on-load.
-- **Phase 3** — Recharts analytics (donut, weekly stacked bars, contribution heatmap); Excel (.xlsx) export with a summary sheet.
-- **Phase 4** — PWA installability (`next-pwa`), command palette (⌘K), carry-forward-yesterday toggle, drag-and-drop Today ordering, revision history.
+## Known limitations
 
-Single-user by design: no teams, sharing, or client-facing features.
+- Employees can technically read `projects.target_hours` via the API (column-level hiding isn't possible with a single Postgres role); however they can never reconstruct completion %, because the admin's sessions are RLS-invisible to them, so org-wide worked totals are unobtainable. UI never renders these values for employees.
+- Anyone can still *sign up* and file an access request (they see nothing until approved); to stop even that, disable public signups in Supabase Auth settings.
+- `legacy/index.html` is the original single-user prototype, kept for reference.

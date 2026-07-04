@@ -14,6 +14,7 @@ export default function LoginPage() {
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [fullName, setFullName] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -33,13 +34,19 @@ export default function LoginPage() {
         if (error) throw error;
         setMsg("Check your email for a sign-in link.");
       } else if (mode === "signup") {
+        // full_name feeds the signup trigger that creates the org membership.
         const { error } = await supabase.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+          options: {
+            emailRedirectTo: `${window.location.origin}/auth/callback`,
+            data: { full_name: fullName.trim() },
+          },
         });
         if (error) throw error;
-        setMsg("Account created. Check your email to confirm, then sign in.");
+        setMsg(
+          "Account created. Confirm your email, then sign in — the administrator will need to approve your access.",
+        );
         setMode("signin");
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -63,7 +70,7 @@ export default function LoginPage() {
             <Clock size={28} />
           </div>
           <h1 className="text-2xl font-bold">ProjectFlow</h1>
-          <p className="muted mt-1 text-sm">Your personal project time tracker.</p>
+          <p className="muted mt-1 text-sm">Organization project time tracking.</p>
         </div>
 
         {!configured && (
@@ -72,7 +79,7 @@ export default function LoginPage() {
             <p className="muted mt-1">
               Add <code>NEXT_PUBLIC_SUPABASE_URL</code> and{" "}
               <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> to <code>.env.local</code> and run the SQL
-              in <code>supabase/schema.sql</code>. See the README.
+              files in <code>supabase/migrations/</code> in order. See the README.
             </p>
           </div>
         )}
@@ -102,6 +109,21 @@ export default function LoginPage() {
               </button>
             ))}
           </div>
+
+          {mode === "signup" && (
+            <div>
+              <label className="label">Full name</label>
+              <input
+                type="text"
+                required
+                autoComplete="name"
+                className="input"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="e.g. Prasad Gore"
+              />
+            </div>
+          )}
 
           <div>
             <label className="label">Email</label>
@@ -142,7 +164,7 @@ export default function LoginPage() {
         </form>
 
         <p className="muted mt-4 text-center text-xs">
-          Single-user tool. Your data is scoped privately to your account.
+          ESS – Electric Sciences &amp; Solutions Pvt. Ltd. · Organization time tracking
         </p>
       </div>
     </main>

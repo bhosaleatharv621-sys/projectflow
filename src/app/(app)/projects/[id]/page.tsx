@@ -1,20 +1,23 @@
 "use client";
 
+// Project detail & completion analytics — ADMIN ONLY (worked vs target vs %
+// is an admin statistic; employees work from the Projects browser instead).
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Loader2, Pencil, CheckCircle2, Trash2, CalendarPlus } from "lucide-react";
+import { ArrowLeft, Loader2, Pencil, CheckCircle2, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { CategoryIcon } from "@/components/CategoryIcon";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { BurnBadge } from "@/components/ui/BurnBadge";
 import { ProjectFormModal } from "@/components/projects/ProjectFormModal";
+import { useMember } from "@/components/MemberProvider";
 import {
-  addToToday,
   deleteProject,
   listCategories,
+  listMembers,
   listProjects,
   listSessionsForProject,
-  listTodaySelections,
   updateProject,
 } from "@/lib/api";
 import { currencySymbol, STATUS_LABELS } from "@/lib/constants";
@@ -32,23 +35,32 @@ import {
   totalSpentSeconds,
 } from "@/lib/time";
 import { track } from "@/lib/sync";
-import type { Category, Project, TimeSession } from "@/lib/types";
+import type { Category, Member, Project, TimeSession } from "@/lib/types";
 
 export default function ProjectDetailPage({ params }: { params: { id: string } }) {
+  const member = useMember();
   const router = useRouter();
+  const isAdmin = member.role === "admin";
+
   const [project, setProject] = useState<Project | null>(null);
   const [category, setCategory] = useState<Category | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [numbers, setNumbers] = useState<string[]>([]);
   const [sessions, setSessions] = useState<TimeSession[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [editOpen, setEditOpen] = useState(false);
 
+  useEffect(() => {
+    if (!isAdmin) router.replace("/projects");
+  }, [isAdmin, router]);
+
   const reload = useCallback(async () => {
-    const [all, cats, sess] = await Promise.all([
+    const [all, cats, sess, mems] = await Promise.all([
       listProjects(),
       listCategories(),
       listSessionsForProject(params.id),
+      listMembers(),
     ]);
     const p = all.find((x) => x.id === params.id) ?? null;
     setProject(p);
@@ -56,12 +68,15 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
     setNumbers(all.map((x) => x.project_number));
     setCategory(p ? cats.find((c) => c.id === p.category_id) ?? null : null);
     setSessions(sess);
+    setMembers(mems);
     setLoading(false);
   }, [params.id]);
 
   useEffect(() => {
-    reload();
-  }, [reload]);
+    if (isAdmin) reload();
+  }, [isAdmin, reload]);
+
+  const memberById = useMemo(() => new Map(members.map((m) => [m.user_id, m])), [members]);
 
   const metrics = useMemo(() => {
     if (!project) return null;
@@ -89,19 +104,14 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
     reload();
   }
 
-  async function onAddToday() {
-    if (!project) return;
-    const day = todayKey();
-    const todays = await listTodaySelections(day);
-    await track(addToToday(project.id, day, todays.length));
-  }
-
   async function onDelete() {
     if (!project) return;
     if (!confirm(`Delete "${project.name}" and all its time history?`)) return;
     await track(deleteProject(project.id));
-    router.push(`/categories/${project.category_id}`);
+    router.push("/projects");
   }
+
+  if (!isAdmin) return null;
 
   if (loading) {
     return (
@@ -114,8 +124,8 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
     return (
       <div className="card p-6">
         <p>Project not found.</p>
-        <Link href="/categories" className="mt-2 inline-block text-brand">
-          Back to categories
+        <Link href="/projects" className="mt-2 inline-block text-brand">
+          Back to projects
         </Link>
       </div>
     );
@@ -123,11 +133,8 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
 
   return (
     <div>
-      <Link
-        href={`/categories/${project.category_id}`}
-        className="mb-3 inline-flex items-center gap-1.5 text-sm muted hover:text-brand"
-      >
-        <ArrowLeft size={15} /> {category?.name ?? "Category"}
+      <Link href="/projects" className="mb-3 inline-flex items-center gap-1.5 text-sm muted hover:text-brand">
+        <ArrowLeft size={15} /> Projects
       </Link>
 
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
@@ -158,9 +165,6 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button className="btn btn-ghost" onClick={onAddToday}>
-            <CalendarPlus size={15} /> Add to today
-          </button>
           <button className="btn btn-ghost" onClick={() => setEditOpen(true)}>
             <Pencil size={15} /> Edit
           </button>
@@ -176,7 +180,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
       </div>
 
       <div className="grid gap-3 sm:grid-cols-4">
-        <Stat label="Total spent" value={`${secsToHours(metrics.total).toFixed(1)}h`} />
+        <Stat label="Total worked" value={`${secsToHours(metrics.total).toFixed(1)}h`} />
         <Stat label="Target" value={`${project.target_hours}h`} />
         <Stat label="Remaining" value={`${metrics.remaining.toFixed(1)}h`} />
         <Stat label="Today" value={secsToHM(metrics.today)} />
@@ -184,7 +188,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
 
       <div className="card mt-3 p-4">
         <div className="mb-2 flex items-center justify-between">
-          <span className="text-sm font-medium">Progress</span>
+          <span className="text-sm font-medium">Completion</span>
           <div className="flex items-center gap-2">
             {project.deadline && <BurnBadge status={metrics.burn} />}
             <span className="text-sm font-semibold">{Math.round(metrics.pct)}%</span>
@@ -194,9 +198,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
           percent={metrics.pct}
           color={metrics.pct >= 100 ? "#059669" : metrics.burn.tone === "red" ? "#dc2626" : category?.color ?? "var(--brand)"}
         />
-        {project.deadline && (
-          <p className="muted mt-2 text-xs">Deadline: {project.deadline}</p>
-        )}
+        {project.deadline && <p className="muted mt-2 text-xs">Deadline: {project.deadline}</p>}
         {metrics.tip && (
           <p className="mt-3 rounded-xl bg-[var(--surface-2)] px-3 py-2 text-sm">{metrics.tip}</p>
         )}
@@ -220,19 +222,28 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
             {sessions.map((s) => {
               const running = !s.end_time;
               const dur = liveElapsedSeconds(s);
+              const person = memberById.get(s.user_id);
               return (
-                <div
-                  key={s.id}
-                  className="flex items-center justify-between rounded-lg px-2 py-1.5 text-sm hover:bg-[var(--surface-2)]"
-                >
-                  <span className="muted">
-                    {new Date(s.start_time).toLocaleDateString(undefined, {
-                      day: "numeric",
-                      month: "short",
-                    })}{" "}
-                    · {formatClockTime(s.start_time)} – {running ? "running" : formatClockTime(s.end_time!)}
-                  </span>
-                  <span className={`font-mono ${running ? "text-emerald-500" : ""}`}>{secsToHM(dur)}</span>
+                <div key={s.id} className="rounded-lg px-2 py-1.5 text-sm hover:bg-[var(--surface-2)]">
+                  <div className="flex items-center justify-between">
+                    <span className="min-w-0 truncate">
+                      <span className="font-medium">{person?.display_name ?? "—"}</span>
+                      <span className="muted">
+                        {" "}
+                        ·{" "}
+                        {new Date(s.start_time).toLocaleDateString(undefined, {
+                          day: "numeric",
+                          month: "short",
+                        })}{" "}
+                        · {formatClockTime(s.start_time)} –{" "}
+                        {running ? "running" : formatClockTime(s.end_time!)}
+                      </span>
+                    </span>
+                    <span className={`shrink-0 font-mono ${running ? "text-emerald-500" : "muted"}`}>
+                      {secsToHM(dur)}
+                    </span>
+                  </div>
+                  {s.notes && <p className="muted mt-0.5 text-xs italic">“{s.notes}”</p>}
                 </div>
               );
             })}

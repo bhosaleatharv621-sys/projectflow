@@ -2,20 +2,34 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { CalendarDays, FolderKanban, BarChart3, Settings, LogOut, Clock } from "lucide-react";
+import {
+  CalendarDays,
+  FolderKanban,
+  BarChart3,
+  Settings,
+  LogOut,
+  Clock,
+  Users,
+  Briefcase,
+} from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { SyncStatus } from "./SyncStatus";
+import type { MemberInfo } from "./MemberProvider";
 
+// Team + Projects are for everyone; Categories management is admin-only and
+// lives in the desktop sidebar (mobile reaches it from the Projects page).
 const NAV = [
   { href: "/today", label: "Today", icon: CalendarDays },
-  { href: "/categories", label: "Categories", icon: FolderKanban },
+  { href: "/projects", label: "Projects", icon: Briefcase },
+  { href: "/team", label: "Team", icon: Users },
   { href: "/reports", label: "Reports", icon: BarChart3 },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-export function AppShell({ email, children }: { email: string; children: React.ReactNode }) {
+export function AppShell({ member, children }: { member: MemberInfo; children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const isAdmin = member.role === "admin";
 
   function isActive(href: string) {
     return pathname === href || pathname.startsWith(href + "/");
@@ -27,6 +41,10 @@ export function AppShell({ email, children }: { email: string; children: React.R
     router.refresh();
   }
 
+  const navItems = isAdmin
+    ? [...NAV.slice(0, 2), { href: "/categories", label: "Categories", icon: FolderKanban }, ...NAV.slice(2)]
+    : NAV;
+
   return (
     <div className="min-h-screen md:flex">
       {/* Desktop sidebar */}
@@ -35,14 +53,19 @@ export function AppShell({ email, children }: { email: string; children: React.R
         style={{ borderColor: "var(--border)", background: "var(--surface)" }}
       >
         <div className="mb-6 flex items-center gap-2 px-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand text-white">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand text-white">
             <Clock size={18} />
           </div>
-          <span className="text-lg font-bold">ProjectFlow</span>
+          <div className="min-w-0">
+            <span className="block text-lg font-bold leading-tight">ProjectFlow</span>
+            <span className="muted block truncate text-[11px]" title={member.orgName}>
+              {member.orgName}
+            </span>
+          </div>
         </div>
 
         <nav className="flex flex-1 flex-col gap-1">
-          {NAV.map(({ href, label, icon: Icon }) => (
+          {navItems.map(({ href, label, icon: Icon }) => (
             <Link
               key={href}
               href={href}
@@ -60,8 +83,12 @@ export function AppShell({ email, children }: { email: string; children: React.R
           <div className="mb-2 px-2">
             <SyncStatus />
           </div>
-          <p className="truncate px-2 text-xs muted" title={email}>
-            {email}
+          <p className="truncate px-2 text-sm font-medium" title={member.displayName}>
+            {member.displayName}
+            <span className="muted ml-1.5 text-xs font-normal capitalize">({member.role})</span>
+          </p>
+          <p className="truncate px-2 text-xs muted" title={member.email}>
+            {member.email}
           </p>
           <button
             onClick={signOut}
@@ -79,11 +106,14 @@ export function AppShell({ email, children }: { email: string; children: React.R
           className="sticky top-0 z-30 flex items-center justify-between border-b px-4 py-3 md:hidden"
           style={{ borderColor: "var(--border)", background: "var(--surface)" }}
         >
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand text-white">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand text-white">
               <Clock size={16} />
             </div>
-            <span className="font-bold">ProjectFlow</span>
+            <div className="min-w-0">
+              <span className="block font-bold leading-tight">ProjectFlow</span>
+              <span className="muted block truncate text-[10px]">{member.orgName}</span>
+            </div>
           </div>
           <SyncStatus />
         </header>
@@ -93,7 +123,7 @@ export function AppShell({ email, children }: { email: string; children: React.R
         </main>
       </div>
 
-      {/* Mobile bottom tab bar */}
+      {/* Mobile bottom tab bar (5 core destinations for everyone) */}
       <nav
         className="fixed inset-x-0 bottom-0 z-30 flex items-stretch border-t md:hidden"
         style={{ borderColor: "var(--border)", background: "var(--surface)" }}

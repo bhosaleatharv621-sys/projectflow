@@ -1,31 +1,45 @@
 "use client";
 
+// Category management — ADMIN ONLY. Employees are routed to the shared
+// Projects browser (RLS independently blocks their category writes).
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Plus, Loader2, Pencil, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { CategoryIcon } from "@/components/CategoryIcon";
 import { CategoryFormModal } from "@/components/categories/CategoryFormModal";
-import { deleteCategory, listCategories, listProjects, listSessions } from "@/lib/api";
-import { secsToHM, totalSpentSeconds } from "@/lib/time";
+import { useMember } from "@/components/MemberProvider";
+import { deleteCategory, getProjectTotals, listCategories, listProjects } from "@/lib/api";
+import { secsToHM } from "@/lib/time";
 import { track } from "@/lib/sync";
-import type { Category, Project, TimeSession } from "@/lib/types";
+import type { Category, Project } from "@/lib/types";
 
 export default function CategoriesPage() {
+  const member = useMember();
+  const router = useRouter();
+  const isAdmin = member.role === "admin";
+
   const [categories, setCategories] = useState<Category[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [sessions, setSessions] = useState<TimeSession[]>([]);
+  const [totals, setTotals] = useState<Map<string, number>>(new Map());
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Category | null>(null);
 
+  useEffect(() => {
+    if (!isAdmin) router.replace("/projects");
+  }, [isAdmin, router]);
+
   const reload = useCallback(async () => {
     try {
-      const [c, p, s] = await Promise.all([listCategories(), listProjects(), listSessions()]);
+      // PERF: totals come from the aggregate view — no raw session rows.
+      const [c, p, t] = await Promise.all([listCategories(), listProjects(), getProjectTotals()]);
       setCategories(c);
       setProjects(p);
-      setSessions(s);
+      setTotals(t);
       setErr(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Failed to load.");
@@ -35,26 +49,20 @@ export default function CategoriesPage() {
   }, []);
 
   useEffect(() => {
-    reload();
-  }, [reload]);
+    if (isAdmin) reload();
+  }, [isAdmin, reload]);
 
   const byCategory = useMemo(() => {
     const map = new Map<string, { count: number; seconds: number }>();
     for (const cat of categories) map.set(cat.id, { count: 0, seconds: 0 });
-    const sessionsByProject = new Map<string, TimeSession[]>();
-    for (const s of sessions) {
-      const arr = sessionsByProject.get(s.project_id) ?? [];
-      arr.push(s);
-      sessionsByProject.set(s.project_id, arr);
-    }
     for (const p of projects) {
       const entry = map.get(p.category_id);
       if (!entry) continue;
       entry.count += 1;
-      entry.seconds += totalSpentSeconds(sessionsByProject.get(p.id) ?? []);
+      entry.seconds += totals.get(p.id) ?? 0;
     }
     return map;
-  }, [categories, projects, sessions]);
+  }, [categories, projects, totals]);
 
   async function onDelete(cat: Category) {
     if (!confirm(`Delete "${cat.name}" and all its projects & time history? This cannot be undone.`)) return;
@@ -62,11 +70,13 @@ export default function CategoriesPage() {
     reload();
   }
 
+  if (!isAdmin) return null;
+
   return (
     <div>
       <PageHeader
         title="Categories"
-        subtitle="Organize your projects into containers."
+        subtitle="Organize the organization's projects into containers."
         right={
           <button
             className="btn btn-primary"
