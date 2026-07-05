@@ -153,6 +153,32 @@ export function daysBetween(from: string | Date, to: string | Date): number {
   return (b.getTime() - a.getTime()) / MS;
 }
 
+// --- Project health (worked-vs-target status buckets) ------------------------
+
+export type HealthKey = "completed" | "not_started" | "in_progress" | "near_target" | "over_target";
+
+export interface ProjectHealth {
+  key: HealthKey;
+  label: string;
+  color: string; // hex accent used by badges/bars
+}
+
+/**
+ * Health buckets from completion %:
+ *   admin-marked completed wins; then 0% = Not started, 1–79% = In progress,
+ *   80–99% = Near target, >= 100% = Over target.
+ */
+export function projectHealth(project: Project, totalSeconds: number): ProjectHealth {
+  if (project.status === "completed") {
+    return { key: "completed", label: "Completed", color: "#059669" };
+  }
+  const pct = percentComplete(totalSeconds, project.target_hours);
+  if (pct <= 0) return { key: "not_started", label: "Not started", color: "#6b7280" };
+  if (pct < 80) return { key: "in_progress", label: "In progress", color: "#4f46e5" };
+  if (pct < 100) return { key: "near_target", label: "Near target", color: "#d97706" };
+  return { key: "over_target", label: "Over target", color: "#dc2626" };
+}
+
 export type BurnTone = "green" | "amber" | "red" | "none";
 
 export interface BurnStatus {

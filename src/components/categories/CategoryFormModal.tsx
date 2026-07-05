@@ -7,6 +7,8 @@ import { CategoryIcon } from "@/components/CategoryIcon";
 import { CATEGORY_COLORS, CATEGORY_ICONS } from "@/lib/constants";
 import { createCategory, updateCategory } from "@/lib/api";
 import { track } from "@/lib/sync";
+import { toast } from "@/lib/toast";
+import { friendlyError } from "@/lib/errors";
 import type { Category } from "@/lib/types";
 
 export function CategoryFormModal({
@@ -36,13 +38,15 @@ export function CategoryFormModal({
     try {
       if (editing) {
         await track(updateCategory(editing.id, { name: name.trim(), icon, color }));
+        toast.success("Category updated");
       } else {
         await track(createCategory({ name: name.trim(), icon, color }));
+        toast.success("Category created");
       }
       onSaved();
       onClose();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Could not save.");
+      setErr(friendlyError(e));
     } finally {
       setBusy(false);
     }

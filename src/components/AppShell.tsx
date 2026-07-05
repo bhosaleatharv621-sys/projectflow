@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -13,7 +14,9 @@ import {
   Briefcase,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { getMyOpenSession, listPendingRequests } from "@/lib/api";
 import { SyncStatus } from "./SyncStatus";
+import { Toaster } from "./Toaster";
 import type { MemberInfo } from "./MemberProvider";
 
 // Team + Projects are for everyone; Categories management is admin-only and
@@ -31,8 +34,59 @@ export function AppShell({ member, children }: { member: MemberInfo; children: R
   const router = useRouter();
   const isAdmin = member.role === "admin";
 
+  // Live nav badges: pending-request count (admin) + my-running-timer dot.
+  const [pendingCount, setPendingCount] = useState(0);
+  const [hasRunning, setHasRunning] = useState(false);
+
+  const refreshBadges = useCallback(async () => {
+    try {
+      const [open, pend] = await Promise.all([
+        getMyOpenSession(member.userId),
+        isAdmin ? listPendingRequests() : Promise.resolve([]),
+      ]);
+      setHasRunning(!!open);
+      setPendingCount(pend.length);
+    } catch {
+      // badges are cosmetic — never break the shell over them
+    }
+  }, [member.userId, isAdmin]);
+
+  useEffect(() => {
+    refreshBadges();
+    const supabase = createClient();
+    const channel = supabase
+      .channel("shell-badges")
+      .on("postgres_changes", { event: "*", schema: "public", table: "time_sessions" }, refreshBadges)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "organization_join_requests" },
+        refreshBadges,
+      )
+      .subscribe();
+    const onFocus = () => refreshBadges();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      supabase.removeChannel(channel);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [refreshBadges]);
+
   function isActive(href: string) {
     return pathname === href || pathname.startsWith(href + "/");
+  }
+
+  function navBadge(href: string) {
+    if (href === "/today" && hasRunning) {
+      return <span className="h-2 w-2 animate-pulseSoft rounded-full bg-emerald-500" aria-label="Timer running" />;
+    }
+    if (href === "/team" && isAdmin && pendingCount > 0) {
+      return (
+        <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-600">
+          {pendingCount}
+        </span>
+      );
+    }
+    return null;
   }
 
   async function signOut() {
@@ -74,7 +128,8 @@ export function AppShell({ member, children }: { member: MemberInfo; children: R
               }`}
             >
               <Icon size={18} />
-              {label}
+              <span className="flex-1">{label}</span>
+              {navBadge(href)}
             </Link>
           ))}
         </nav>
@@ -123,6 +178,8 @@ export function AppShell({ member, children }: { member: MemberInfo; children: R
         </main>
       </div>
 
+      <Toaster />
+
       {/* Mobile bottom tab bar (5 core destinations for everyone) */}
       <nav
         className="fixed inset-x-0 bottom-0 z-30 flex items-stretch border-t md:hidden"
@@ -132,11 +189,14 @@ export function AppShell({ member, children }: { member: MemberInfo; children: R
           <Link
             key={href}
             href={href}
-            className={`flex flex-1 flex-col items-center gap-1 py-2.5 text-[11px] font-medium ${
+            className={`relative flex flex-1 flex-col items-center gap-1 py-2.5 text-[11px] font-medium ${
               isActive(href) ? "text-brand" : "muted"
             }`}
           >
-            <Icon size={20} />
+            <span className="relative">
+              <Icon size={20} />
+              <span className="absolute -right-2 -top-1">{navBadge(href)}</span>
+            </span>
             {label}
           </Link>
         ))}

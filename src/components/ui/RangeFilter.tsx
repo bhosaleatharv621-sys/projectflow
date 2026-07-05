@@ -4,12 +4,13 @@ import { RANGE_LABELS, type RangeKey } from "@/lib/time";
 
 const ORDER: RangeKey[] = ["today", "week", "month", "year", "all"];
 
-/** Today / Week / Month / Year / All pills, shared by Team + Reports. */
+/** Today / Week / Month / Year / All pills, shared by Team + Reports.
+ *  value null = none highlighted (e.g. a custom range is active). */
 export function RangeFilter({
   value,
   onChange,
 }: {
-  value: RangeKey;
+  value: RangeKey | null;
   onChange: (r: RangeKey) => void;
 }) {
   return (

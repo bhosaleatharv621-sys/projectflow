@@ -15,10 +15,12 @@ export function AccessGate({
   status,
   email,
   orgName,
+  deactivated = false,
 }: {
   status: JoinRequestStatus | null; // null = no request on file yet
   email: string;
   orgName: string;
+  deactivated?: boolean; // approved member whose account was deactivated
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -43,7 +45,8 @@ export function AccessGate({
     }
   }
 
-  const rejected = status === "rejected";
+  const rejected = !deactivated && status === "rejected";
+  const blocked = deactivated || rejected; // terminal states: no self-service
 
   return (
     <main className="flex min-h-screen items-center justify-center p-6">
@@ -59,13 +62,18 @@ export function AccessGate({
         <div className="card p-6">
           <div
             className={`mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full ${
-              rejected ? "bg-red-500/10 text-red-500" : "bg-amber-500/10 text-amber-500"
+              blocked ? "bg-red-500/10 text-red-500" : "bg-amber-500/10 text-amber-500"
             }`}
           >
-            {rejected ? <ShieldX size={24} /> : <Hourglass size={24} />}
+            {blocked ? <ShieldX size={24} /> : <Hourglass size={24} />}
           </div>
 
-          {rejected ? (
+          {deactivated ? (
+            <>
+              <p className="font-semibold">Your account has been deactivated.</p>
+              <p className="muted mt-1 text-sm">Please contact the administrator.</p>
+            </>
+          ) : rejected ? (
             <>
               <p className="font-semibold">Your access request was rejected.</p>
               <p className="muted mt-1 text-sm">Please contact the administrator.</p>
@@ -90,7 +98,7 @@ export function AccessGate({
           {err && <p className="mt-2 text-sm text-red-500">{err}</p>}
 
           <div className="mt-5 flex flex-wrap justify-center gap-2">
-            {status === null && !rejected && (
+            {status === null && !blocked && (
               <button className="btn btn-primary" onClick={submitRequest} disabled={busy}>
                 {busy && <Loader2 size={15} className="animate-spin" />}
                 Request access

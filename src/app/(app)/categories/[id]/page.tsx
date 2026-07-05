@@ -9,6 +9,7 @@ import { ArrowLeft, Plus, Loader2, Pencil, Trash2, Search } from "lucide-react";
 import { CategoryIcon } from "@/components/CategoryIcon";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { BurnBadge } from "@/components/ui/BurnBadge";
+import { HealthBadge } from "@/components/ui/HealthBadge";
 import { ProjectFormModal } from "@/components/projects/ProjectFormModal";
 import { useMember } from "@/components/MemberProvider";
 import {
@@ -18,7 +19,7 @@ import {
   listProjectsByCategory,
 } from "@/lib/api";
 import { currencySymbol } from "@/lib/constants";
-import { burnStatus, percentComplete, secsToHours } from "@/lib/time";
+import { burnStatus, percentComplete, projectHealth, secsToHours } from "@/lib/time";
 import { track } from "@/lib/sync";
 import type { Category, Project } from "@/lib/types";
 
@@ -177,11 +178,9 @@ export default function CategoryDetailPage({ params }: { params: { id: string } 
                       <span className="rounded-md bg-[var(--surface-2)] px-1.5 py-0.5 text-xs font-medium muted">
                         {p.project_number}
                       </span>
-                      {p.deadline ? (
-                        <BurnBadge status={burn} />
-                      ) : (
-                        <span className="text-xs muted">{Math.round(pct)}%</span>
-                      )}
+                      <HealthBadge health={projectHealth(p, total)} />
+                      {p.deadline && <BurnBadge status={burn} />}
+                      <span className="text-xs muted">{Math.round(pct)}%</span>
                     </div>
                     <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs muted">
                       {p.cost != null && (

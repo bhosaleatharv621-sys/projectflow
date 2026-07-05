@@ -4,6 +4,8 @@
 
 export type Role = "admin" | "employee";
 
+export type MemberStatus = "active" | "inactive";
+
 export interface Organization {
   id: string;
   name: string;
@@ -14,6 +16,7 @@ export interface Member {
   user_id: string;
   organization_id: string;
   role: Role;
+  status: MemberStatus;
   display_name: string;
   created_at: string;
 }
@@ -84,6 +87,36 @@ export interface DailySelection {
   position: number;
   added_at: string;
   removed_at: string | null;
+}
+
+export type TimeEntryRequestStatus = "pending" | "approved" | "rejected";
+
+export interface TimeEntryRequest {
+  id: string;
+  organization_id: string;
+  user_id: string;
+  project_id: string;
+  start_time: string;
+  end_time: string;
+  duration_seconds: number;
+  reason: string | null;
+  status: TimeEntryRequestStatus;
+  requested_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  created_session_id: string | null;
+}
+
+export interface AuditLog {
+  id: string;
+  organization_id: string | null;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  action: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  details: Record<string, unknown> | null;
+  created_at: string;
 }
 
 // Aggregate rows returned by the reporting RPCs / views. These are computed

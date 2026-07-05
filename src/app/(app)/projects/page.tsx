@@ -12,11 +12,14 @@ import {
   Trash2,
   Search,
   FolderKanban,
+  CheckCircle2,
 } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { CategoryIcon } from "@/components/CategoryIcon";
+import { CardSkeleton } from "@/components/ui/Skeleton";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { BurnBadge } from "@/components/ui/BurnBadge";
+import { HealthBadge } from "@/components/ui/HealthBadge";
 import { ProjectFormModal } from "@/components/projects/ProjectFormModal";
 import { useMember } from "@/components/MemberProvider";
 import {
@@ -27,10 +30,14 @@ import {
   listProjects,
   listTodaySelections,
   startSession,
+  updateProject,
 } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
-import { burnStatus, percentComplete, secsToHours, todayKey } from "@/lib/time";
+import { burnStatus, percentComplete, projectHealth, secsToHours, todayKey } from "@/lib/time";
+import { STATUS_LABELS } from "@/lib/constants";
 import { track } from "@/lib/sync";
+import { toast } from "@/lib/toast";
+import { friendlyError } from "@/lib/errors";
 import type { Category, Project } from "@/lib/types";
 
 type SortKey = "recent" | "name" | "number" | "deadline";
@@ -144,8 +151,27 @@ export default function ProjectsPage() {
 
   async function onDelete(p: Project) {
     if (!confirm(`Delete "${p.name}" and all its time history? This affects the whole organization.`)) return;
-    await track(deleteProject(p.id));
-    reload();
+    try {
+      await track(deleteProject(p.id));
+      toast.success("Project deleted");
+      reload();
+    } catch (e) {
+      toast.error(friendlyError(e));
+    }
+  }
+
+  async function onMarkComplete(p: Project) {
+    if (!confirm(`Mark "${p.name}" as completed?`)) return;
+    setBusyId(p.id);
+    try {
+      await track(updateProject(p.id, { status: "completed", completed_at: new Date().toISOString() }));
+      toast.success("Project completed");
+      await reload();
+    } catch (e) {
+      toast.error(friendlyError(e));
+    } finally {
+      setBusyId(null);
+    }
   }
 
   return (
@@ -200,8 +226,11 @@ export default function ProjectsPage() {
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-16">
-          <Loader2 className="animate-spin muted" />
+        <div className="space-y-2.5">
+          <CardSkeleton lines={2} />
+          <CardSkeleton lines={2} />
+          <CardSkeleton lines={2} />
+          <CardSkeleton lines={2} />
         </div>
       ) : rows.length === 0 ? (
         <div className="card p-8 text-center">
@@ -210,7 +239,7 @@ export default function ProjectsPage() {
             {projects.length === 0
               ? isAdmin
                 ? "Create the first project for your team."
-                : "Your administrator hasn't created any projects yet."
+                : "No projects yet. Ask your admin to create one."
               : "Try a different search or filter."}
           </p>
         </div>
@@ -221,7 +250,8 @@ export default function ProjectsPage() {
             const total = totals.get(p.id) ?? 0;
             const pct = percentComplete(total, p.target_hours);
             const burn = burnStatus(p, total);
-            const barColor = pct >= 100 ? "#059669" : burn.tone === "red" ? "#dc2626" : cat?.color ?? "var(--brand)";
+            const health = projectHealth(p, total);
+            const barColor = health.key === "completed" ? "#059669" : health.color;
             return (
               <div key={p.id} className="card p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -244,7 +274,18 @@ export default function ProjectsPage() {
                         <span className="rounded-md bg-[var(--surface-2)] px-1.5 py-0.5 text-xs font-medium muted">
                           {p.project_number}
                         </span>
-                        {isAdmin && p.deadline && <BurnBadge status={burn} />}
+                        {isAdmin ? (
+                          <>
+                            <HealthBadge health={health} />
+                            {p.deadline && <BurnBadge status={burn} />}
+                          </>
+                        ) : (
+                          /* Employees see the plain project status — never
+                             progress-derived values. */
+                          <span className="rounded-full bg-[var(--surface-2)] px-2.5 py-0.5 text-xs font-medium muted">
+                            {STATUS_LABELS[p.status] ?? p.status}
+                          </span>
+                        )}
                       </div>
                       <p className="muted mt-0.5 text-xs">{cat?.name ?? "—"}</p>
                       {/* Completion statistics are an admin-only view. */}
@@ -252,7 +293,8 @@ export default function ProjectsPage() {
                         <div className="mt-2 max-w-md">
                           <div className="mb-1 flex justify-between text-xs muted">
                             <span>
-                              {secsToHours(total).toFixed(1)}h / {p.target_hours}h
+                              {secsToHours(total).toFixed(1)}h worked · {p.target_hours}h target ·{" "}
+                              {Math.max(0, p.target_hours - secsToHours(total)).toFixed(1)}h left
                             </span>
                             <span className="font-semibold" style={{ color: "var(--text)" }}>
                               {Math.round(pct)}%
@@ -283,6 +325,16 @@ export default function ProjectsPage() {
                     </button>
                     {isAdmin && (
                       <>
+                        {p.status !== "completed" && (
+                          <button
+                            className="btn btn-ghost px-2.5 py-1.5 text-emerald-600"
+                            title="Mark complete"
+                            onClick={() => onMarkComplete(p)}
+                            disabled={busyId === p.id}
+                          >
+                            <CheckCircle2 size={15} />
+                          </button>
+                        )}
                         <button
                           className="btn btn-ghost px-2.5 py-1.5"
                           title="Edit"
