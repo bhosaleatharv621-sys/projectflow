@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { CategoryIcon } from "@/components/CategoryIcon";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { BurnBadge } from "@/components/ui/BurnBadge";
+import { HealthBadge } from "@/components/ui/HealthBadge";
 import { ProjectFormModal } from "@/components/projects/ProjectFormModal";
 import { useMember } from "@/components/MemberProvider";
 import {
@@ -28,6 +29,7 @@ import {
   localDateKey,
   paceTip,
   percentComplete,
+  projectHealth,
   secsToHM,
   secsToHours,
   todayContributionSeconds,
@@ -151,6 +153,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
               <span className="rounded-md bg-[var(--surface-2)] px-2 py-0.5 text-xs font-medium muted">
                 {project.project_number}
               </span>
+              <HealthBadge health={projectHealth(project, metrics.total)} />
             </div>
             <p className="muted mt-1 text-sm">
               {STATUS_LABELS[project.status] ?? project.status}

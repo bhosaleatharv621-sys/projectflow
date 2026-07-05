@@ -6,6 +6,8 @@ import { Modal } from "@/components/ui/Modal";
 import { createProject, suggestNextNumber, updateProject, type ProjectInput } from "@/lib/api";
 import { currencySymbol } from "@/lib/constants";
 import { track } from "@/lib/sync";
+import { toast } from "@/lib/toast";
+import { friendlyError } from "@/lib/errors";
 import type { Category, Project } from "@/lib/types";
 
 interface Props {
@@ -107,8 +109,10 @@ export function ProjectFormModal({
     try {
       if (editing) {
         await track(updateProject(editing.id, input));
+        toast.success("Project updated");
       } else {
         await track(createProject(input));
+        toast.success("Project created");
       }
       onSaved();
       if (addAnother && !editing) {
@@ -122,7 +126,7 @@ export function ProjectFormModal({
         onClose();
       }
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Could not save project.");
+      setErr(friendlyError(e));
     } finally {
       setBusy(false);
     }

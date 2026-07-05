@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Play, Pause, Square, X, ChevronDown, Loader2 } from "lucide-react";
+import { Play, Pause, Square, X, ChevronDown, Loader2, Pencil } from "lucide-react";
 import { CategoryIcon } from "@/components/CategoryIcon";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { BurnBadge } from "@/components/ui/BurnBadge";
@@ -31,10 +31,11 @@ export function TodayCard({
   onPause,
   onStop,
   onRemove,
+  onEditNote,
 }: {
   project: Project;
   category: Category | null;
-  todaySessions: TimeSession[]; // the CALLER's sessions on this project today
+  todaySessions: TimeSession[]; // the CALLER's own sessions on this project today
   totalSeconds: number; // lifetime total (only rendered for the admin)
   now: number;
   state: CardState;
@@ -44,6 +45,7 @@ export function TodayCard({
   onPause: () => void;
   onStop: () => void;
   onRemove: () => void;
+  onEditNote: (session: TimeSession) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -165,11 +167,22 @@ export function TodayCard({
             const running = !c.end_time;
             return (
               <div key={c.id} className="text-xs">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <span className="muted">
                     {formatClockTime(c.start_time)} – {running ? "now" : formatClockTime(c.end_time!)}
                   </span>
-                  <span className={`font-mono ${running ? "text-emerald-500" : ""}`}>{secsToHM(dur)}</span>
+                  <span className="flex items-center gap-1">
+                    <span className={`font-mono ${running ? "text-emerald-500" : ""}`}>{secsToHM(dur)}</span>
+                    {!running && (
+                      <button
+                        className="rounded p-0.5 muted hover:text-brand"
+                        title={c.notes ? "Edit note" : "Add note"}
+                        onClick={() => onEditNote(c)}
+                      >
+                        <Pencil size={11} />
+                      </button>
+                    )}
+                  </span>
                 </div>
                 {c.notes && <p className="muted mt-0.5 italic">“{c.notes}”</p>}
               </div>

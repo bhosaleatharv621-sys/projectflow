@@ -9,6 +9,7 @@ interface MembershipRow {
   user_id: string;
   organization_id: string;
   role: Role;
+  status: "active" | "inactive";
   display_name: string;
   organizations: { name: string } | { name: string }[] | null;
 }
@@ -25,7 +26,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // context instead of re-asking the network (see MemberProvider).
   const { data } = await supabase
     .from("members")
-    .select("user_id, organization_id, role, display_name, organizations(name)")
+    .select("user_id, organization_id, role, status, display_name, organizations(name)")
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -59,6 +60,19 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   const orgRel = row.organizations;
   const orgName = Array.isArray(orgRel) ? orgRel[0]?.name ?? "" : orgRel?.name ?? "";
+
+  if (row.status === "inactive") {
+    // Deactivated member: UI gate here, and RLS independently returns zero
+    // org rows (current_org_id() requires an ACTIVE membership since 0004).
+    return (
+      <AccessGate
+        deactivated
+        status={null}
+        email={user.email ?? ""}
+        orgName={orgName || "ESS – Electric Sciences & Solutions Pvt. Ltd."}
+      />
+    );
+  }
 
   const member: MemberInfo = {
     userId: row.user_id,

@@ -15,6 +15,7 @@
 
 import { createClient } from "./supabase/client";
 import type {
+  AuditLog,
   Category,
   DailySelection,
   JoinRequest,
@@ -22,6 +23,7 @@ import type {
   Project,
   ProjectStatus,
   ProjectTotal,
+  TimeEntryRequest,
   TimeSession,
   UserTotal,
 } from "./types";
@@ -74,6 +76,72 @@ export async function rejectJoinRequest(requestId: string): Promise<void> {
 /** Safety valve for accounts that predate the signup trigger. */
 export async function requestAccess(): Promise<void> {
   const { error } = await db().rpc("request_access");
+  if (error) throw error;
+}
+
+// --- Manual time entry requests (approval model) -----------------------------
+// Reads are RLS-scoped (own rows, or the whole org for the admin). Mutations
+// go through SECURITY DEFINER RPCs: submit is always for the caller;
+// approve/reject assert the admin inside the database.
+
+export async function listTimeEntryRequests(status?: string): Promise<TimeEntryRequest[]> {
+  let q = db()
+    .from("time_entry_requests")
+    .select("*")
+    .order("requested_at", { ascending: false })
+    .limit(100);
+  if (status) q = q.eq("status", status);
+  const { data, error } = await q;
+  if (error) throw error;
+  return data as TimeEntryRequest[];
+}
+
+export async function submitTimeEntryRequest(input: {
+  projectId: string;
+  startIso: string;
+  endIso: string;
+  reason: string;
+}): Promise<void> {
+  const { error } = await db().rpc("submit_time_entry_request", {
+    p_project_id: input.projectId,
+    p_start: input.startIso,
+    p_end: input.endIso,
+    p_reason: input.reason,
+  });
+  if (error) throw error;
+}
+
+export async function approveTimeEntryRequest(requestId: string): Promise<void> {
+  const { error } = await db().rpc("approve_time_entry_request", { p_request_id: requestId });
+  if (error) throw error;
+}
+
+export async function rejectTimeEntryRequest(requestId: string): Promise<void> {
+  const { error } = await db().rpc("reject_time_entry_request", { p_request_id: requestId });
+  if (error) throw error;
+}
+
+// --- Audit log (admin-only read; RLS returns zero rows to anyone else) ------
+
+export async function listAuditLogs(limit = 100): Promise<AuditLog[]> {
+  const { data, error } = await db()
+    .from("audit_logs")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data as AuditLog[];
+}
+
+// --- Member deactivation (admin only; asserted inside the database) ---------
+
+export async function deactivateMember(userId: string): Promise<void> {
+  const { error } = await db().rpc("deactivate_member", { p_user_id: userId });
+  if (error) throw error;
+}
+
+export async function reactivateMember(userId: string): Promise<void> {
+  const { error } = await db().rpc("reactivate_member", { p_user_id: userId });
   if (error) throw error;
 }
 
@@ -201,21 +269,27 @@ export async function getProjectTotals(): Promise<Map<string, number>> {
   return new Map((data as ProjectTotal[]).map((r) => [r.project_id, Number(r.total_seconds)]));
 }
 
-/** Worked seconds per project within [from, now]. null = all time. */
-export async function getRangeProjectTotals(fromIso: string | null): Promise<Map<string, number>> {
+/** Worked seconds per project within [from, to). null bounds = unbounded. */
+export async function getRangeProjectTotals(
+  fromIso: string | null,
+  toIso: string | null = null,
+): Promise<Map<string, number>> {
   const { data, error } = await db().rpc("session_project_totals", {
     p_from: fromIso,
-    p_to: null,
+    p_to: toIso,
   });
   if (error) throw error;
   return new Map((data as ProjectTotal[]).map((r) => [r.project_id, Number(r.total_seconds)]));
 }
 
-/** Worked seconds per person within [from, now]. null = all time. */
-export async function getRangeUserTotals(fromIso: string | null): Promise<UserTotal[]> {
+/** Worked seconds per person within [from, to). null bounds = unbounded. */
+export async function getRangeUserTotals(
+  fromIso: string | null,
+  toIso: string | null = null,
+): Promise<UserTotal[]> {
   const { data, error } = await db().rpc("session_user_totals", {
     p_from: fromIso,
-    p_to: null,
+    p_to: toIso,
   });
   if (error) throw error;
   return (data as UserTotal[]).map((r) => ({
@@ -228,12 +302,13 @@ export async function getRangeUserTotals(fromIso: string | null): Promise<UserTo
 // --- Time sessions ----------------------------------------------------------
 
 /**
- * Sessions starting on/after `fromIso` (all visible people), newest first.
+ * Sessions within [fromIso, toIso) (all visible people), newest first.
  * PERF: always range-bounded + LIMITed — never "everything ever".
  */
 export async function listSessionsSince(
   fromIso: string | null,
   limit = 500,
+  toIso: string | null = null,
 ): Promise<TimeSession[]> {
   let q = db()
     .from("time_sessions")
@@ -241,6 +316,7 @@ export async function listSessionsSince(
     .order("start_time", { ascending: false })
     .limit(limit);
   if (fromIso) q = q.gte("start_time", fromIso);
+  if (toIso) q = q.lt("start_time", toIso);
   const { data, error } = await q;
   if (error) throw error;
   return data as TimeSession[];
@@ -315,13 +391,21 @@ export async function stopActiveSession(): Promise<TimeSession | null> {
   return (data as TimeSession) ?? null;
 }
 
-/** Attach work notes to a stopped session (notes-after-stop flow). */
+/**
+ * Attach/edit work notes on a session. RLS only lets you update your OWN
+ * sessions; an update matching zero rows means it wasn't yours — surface
+ * that as a friendly error instead of silently doing nothing.
+ */
 export async function updateSessionNotes(sessionId: string, notes: string): Promise<void> {
-  const { error } = await db()
+  const { data, error } = await db()
     .from("time_sessions")
     .update({ notes: notes.trim() || null })
-    .eq("id", sessionId);
+    .eq("id", sessionId)
+    .select("id");
   if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error("You can only edit your own notes.");
+  }
 }
 
 // --- Daily selection (Today's Timetable) ------------------------------------

@@ -28,7 +28,10 @@ update members set role = 'admin' where user_id = '<new-admin-user-id>';
    - `supabase/migrations/0001_initial_schema.sql`
    - `supabase/migrations/0002_organizations.sql`
    - `supabase/migrations/0003_member_approval_flow.sql`
-   (Existing installs run only the migrations they haven't applied yet — data is preserved at every step; `0002` backfills existing rows into the organization, `0003` adds the approval flow without touching members.)
+   - `supabase/migrations/0004_member_deactivation.sql`
+   - `supabase/migrations/0005_audit_log.sql`
+   - `supabase/migrations/0006_manual_time_requests.sql`
+   (Existing installs run only the migrations they haven't applied yet — every one is additive and preserves data: `0002` backfills rows into the organization, `0003` adds the approval flow, `0004` adds member deactivation, `0005` the audit log, `0006` manual time requests.)
 4. `cp .env.local.example .env.local` and fill in Project Settings → API values.
 5. Supabase → Authentication → URL Configuration: add `http://localhost:3000/auth/callback` (and your production callback).
 6. `npm run dev` → **Prasad Gore signs up first** (becomes admin) → employees sign up after and wait on the pending screen until the admin approves them from **Team → Pending access requests**.

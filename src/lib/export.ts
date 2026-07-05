@@ -5,10 +5,16 @@
 
 import type { Category, Member, Project, TimeSession } from "./types";
 import { secsToClock } from "./time";
+import { STATUS_LABELS } from "./constants";
 
 function csvCell(v: string | number): string {
   const s = String(v ?? "");
   return `"${s.replace(/"/g, '""')}"`;
+}
+
+export interface CsvOptions {
+  /** Include the Target Hours column — admin only (role-gated by callers). */
+  includeTargets?: boolean;
 }
 
 export function sessionsToCsv(
@@ -16,6 +22,7 @@ export function sessionsToCsv(
   projects: Project[],
   categories: Category[],
   members: Member[] = [],
+  options: CsvOptions = {},
 ): string {
   const projById = new Map(projects.map((p) => [p.id, p]));
   const catById = new Map(categories.map((c) => [c.id, c]));
@@ -23,10 +30,12 @@ export function sessionsToCsv(
 
   const header = [
     "Date",
-    "Person",
+    "Employee",
     "Category",
     "Project Number",
     "Project Name",
+    "Project Status",
+    ...(options.includeTargets ? ["Target Hours"] : []),
     "Session Start",
     "Session End",
     "Duration (hh:mm:ss)",
@@ -45,6 +54,8 @@ export function sessionsToCsv(
         c?.name ?? "",
         p?.project_number ?? "",
         p?.name ?? "",
+        p ? STATUS_LABELS[p.status] ?? p.status : "",
+        ...(options.includeTargets ? [p?.target_hours ?? ""] : []),
         new Date(s.start_time).toLocaleString(),
         s.end_time ? new Date(s.end_time).toLocaleString() : "",
         secsToClock(s.duration_seconds ?? 0),

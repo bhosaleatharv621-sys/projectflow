@@ -2,28 +2,46 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { CalendarPlus, Loader2 } from "lucide-react";
+import { CalendarPlus, Loader2, History } from "lucide-react";
 import { TodayCard, type CardState } from "@/components/today/TodayCard";
+import { CardSkeleton } from "@/components/ui/Skeleton";
 import { AddToTodayModal } from "@/components/today/AddToTodayModal";
 import { SessionNotesModal } from "@/components/today/SessionNotesModal";
+import { ManualTimeModal } from "@/components/today/ManualTimeModal";
 import { useMember } from "@/components/MemberProvider";
+import { AdminStats, EmployeeStats } from "@/components/dashboard/DashboardStats";
+import { OnboardingCard } from "@/components/dashboard/OnboardingCard";
 import {
   addToToday,
   getMyOpenSession,
   getProjectTotals,
+  getRangeProjectTotals,
   listCategories,
+  listMembers,
   listMySessionsSince,
+  listOpenSessions,
+  listPendingRequests,
   listProjects,
+  listTimeEntryRequests,
   listTodaySelections,
   removeFromToday,
   startSession,
   stopActiveSession,
 } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
-import { liveElapsedSeconds, startOfToday, todayKey } from "@/lib/time";
+import { liveElapsedSeconds, rangeStart, startOfToday, todayKey } from "@/lib/time";
 import { secsToHM } from "@/lib/time";
 import { track } from "@/lib/sync";
-import type { Category, DailySelection, Project, TimeSession } from "@/lib/types";
+import { toast } from "@/lib/toast";
+import { friendlyError } from "@/lib/errors";
+import type {
+  Category,
+  DailySelection,
+  Member,
+  Project,
+  TimeEntryRequest,
+  TimeSession,
+} from "@/lib/types";
 
 export default function TodayPage() {
   const member = useMember();
@@ -32,14 +50,23 @@ export default function TodayPage() {
   const [selections, setSelections] = useState<DailySelection[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [mySessions, setMySessions] = useState<TimeSession[]>([]);
+  const [myWeekSessions, setMyWeekSessions] = useState<TimeSession[]>([]);
   const [openSession, setOpenSession] = useState<TimeSession | null>(null);
   const [totals, setTotals] = useState<Map<string, number>>(new Map());
+  // Admin dashboard extras (org-wide, cheap aggregates only).
+  const [members, setMembers] = useState<Member[]>([]);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [allOpenSessions, setAllOpenSessions] = useState<TimeSession[]>([]);
+  const [orgTodaySeconds, setOrgTodaySeconds] = useState(0);
+  const [orgWeekSeconds, setOrgWeekSeconds] = useState(0);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(() => Date.now());
   const [addOpen, setAddOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notesFor, setNotesFor] = useState<TimeSession | null>(null);
+  const [notesMode, setNotesMode] = useState<"create" | "edit">("create");
+  const [manualOpen, setManualOpen] = useState(false);
+  const [myRequests, setMyRequests] = useState<TimeEntryRequest[]>([]);
   // Projects the user explicitly Stopped this visit -> show "Start" (fresh
   // cycle at 0:00) instead of "Resume". Cleared when a new cycle begins.
   const [stoppedIds, setStoppedIds] = useState<Set<string>>(new Set());
@@ -48,24 +75,50 @@ export default function TodayPage() {
 
   const reload = useCallback(async () => {
     // PERF: everything here is scoped — my selections for today, MY sessions
-    // since local midnight, my single open session, and (admin only) the
-    // pre-aggregated lifetime totals. The old code fetched every session in
-    // the database and reduced in the browser.
-    const sinceIso = startOfToday().toISOString();
+    // since the start of the week (feeds both the timetable and the personal
+    // dashboard), my single open session, and (admin only) small org
+    // aggregates. No unbounded session history is ever fetched.
+    const weekIso = (rangeStart("week") ?? startOfToday()).toISOString();
+    const todayIso = startOfToday().toISOString();
     const [sel, proj, cats, sess, open, tot] = await Promise.all([
       listTodaySelections(day),
       listProjects(),
       listCategories(),
-      listMySessionsSince(member.userId, sinceIso),
+      listMySessionsSince(member.userId, weekIso),
       getMyOpenSession(member.userId),
       isAdmin ? getProjectTotals() : Promise.resolve(new Map<string, number>()),
     ]);
     setSelections(sel);
     setProjects(proj);
     setCategories(cats);
-    setMySessions(sess);
+    setMyWeekSessions(sess);
     setOpenSession(open);
     setTotals(tot);
+
+    // My manual-time requests (RLS scopes; admin also receives others', so
+    // filter to the caller's own for this personal card).
+    try {
+      const reqs = await listTimeEntryRequests();
+      setMyRequests(reqs.filter((r) => r.user_id === member.userId).slice(0, 5));
+    } catch {
+      // table may not exist yet if 0006 hasn't been run — degrade silently
+      setMyRequests([]);
+    }
+
+    if (isAdmin) {
+      const [mems, pend, opens, orgToday, orgWeek] = await Promise.all([
+        listMembers(),
+        listPendingRequests(),
+        listOpenSessions(),
+        getRangeProjectTotals(todayIso),
+        getRangeProjectTotals(weekIso),
+      ]);
+      setMembers(mems);
+      setPendingCount(pend.length);
+      setAllOpenSessions(opens);
+      setOrgTodaySeconds([...orgToday.values()].reduce((a, b) => a + b, 0));
+      setOrgWeekSeconds([...orgWeek.values()].reduce((a, b) => a + b, 0));
+    }
     setLoading(false);
   }, [day, member.userId, isAdmin]);
 
@@ -101,15 +154,22 @@ export default function TodayPage() {
     return () => clearInterval(id);
   }, [openSession]);
 
+  // Timestamp comparison via Date (not string compare — Postgres returns
+  // "+00:00" offsets while toISOString() uses "Z").
+  const myTodaySessions = useMemo(() => {
+    const todayMs = startOfToday().getTime();
+    return myWeekSessions.filter((s) => new Date(s.start_time).getTime() >= todayMs);
+  }, [myWeekSessions]);
+
   const sessionsByProject = useMemo(() => {
     const map = new Map<string, TimeSession[]>();
-    for (const s of mySessions) {
+    for (const s of myTodaySessions) {
       const arr = map.get(s.project_id) ?? [];
       arr.push(s);
       map.set(s.project_id, arr);
     }
     return map;
-  }, [mySessions]);
+  }, [myTodaySessions]);
 
   const projectById = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects]);
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
@@ -120,9 +180,28 @@ export default function TodayPage() {
   );
 
   const totalToday = useMemo(
-    () => mySessions.reduce((sum, s) => sum + liveElapsedSeconds(s, now), 0),
-    [mySessions, now],
+    () => myTodaySessions.reduce((sum, s) => sum + liveElapsedSeconds(s, now), 0),
+    [myTodaySessions, now],
   );
+
+  const totalWeek = useMemo(
+    () => myWeekSessions.reduce((sum, s) => sum + liveElapsedSeconds(s, now), 0),
+    [myWeekSessions, now],
+  );
+
+  // Most recently worked projects (deduped, newest first) for quick-start.
+  const recentProjects = useMemo(() => {
+    const seen = new Set<string>();
+    const out: Project[] = [];
+    for (const s of myWeekSessions) {
+      if (seen.has(s.project_id)) continue;
+      seen.add(s.project_id);
+      const p = projectById.get(s.project_id);
+      if (p) out.push(p);
+      if (out.length >= 4) break;
+    }
+    return out;
+  }, [myWeekSessions, projectById]);
 
   function cardState(projectId: string): CardState {
     if (openSession?.project_id === projectId) return "running";
@@ -143,8 +222,33 @@ export default function TodayPage() {
         next.delete(projectId);
         return next;
       });
+      toast.success("Timer started");
       await reload();
       setNow(Date.now());
+    } catch (e) {
+      toast.error(friendlyError(e));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function quickStart(projectId: string) {
+    setBusyId(projectId);
+    try {
+      if (!selections.some((s) => s.project_id === projectId)) {
+        await track(addToToday(member.userId, projectId, day, selections.length));
+      }
+      await track(startSession(projectId));
+      setStoppedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(projectId);
+        return next;
+      });
+      toast.success("Timer started");
+      await reload();
+      setNow(Date.now());
+    } catch (e) {
+      toast.error(friendlyError(e));
     } finally {
       setBusyId(null);
     }
@@ -154,7 +258,10 @@ export default function TodayPage() {
     setBusyId(projectId);
     try {
       await track(stopActiveSession());
+      toast.success("Paused — time saved");
       await reload();
+    } catch (e) {
+      toast.error(friendlyError(e));
     } finally {
       setBusyId(null);
     }
@@ -171,7 +278,12 @@ export default function TodayPage() {
       }
       setStoppedIds((prev) => new Set(prev).add(projectId));
       await reload();
-      if (closed) setNotesFor(closed);
+      if (closed) {
+        setNotesMode("create");
+        setNotesFor(closed);
+      }
+    } catch (e) {
+      toast.error(friendlyError(e));
     } finally {
       setBusyId(null);
     }
@@ -212,9 +324,67 @@ export default function TodayPage() {
         </div>
       </div>
 
+      {/* First-use guidance: admin sees it while setup is incomplete;
+          employees see it until they've logged any work. Dismissible. */}
+      {!loading && isAdmin && (categories.length === 0 || projects.length === 0 || members.filter((m) => m.role === "employee").length === 0) && (
+        <OnboardingCard
+          role="admin"
+          steps={[
+            { label: "Create categories", done: categories.length > 0, href: "/categories" },
+            { label: "Create projects", done: projects.length > 0, href: "/projects" },
+            {
+              label: "Approve employees when they request access",
+              done: members.filter((m) => m.role === "employee").length > 0,
+              href: "/team",
+            },
+            { label: "Monitor the team and reports", href: "/reports" },
+          ]}
+        />
+      )}
+      {!loading && !isAdmin && myWeekSessions.length === 0 && selections.length === 0 && (
+        <OnboardingCard
+          role="employee"
+          steps={[
+            { label: "Find a project in the Projects tab", href: "/projects" },
+            { label: "Add it to Today" },
+            { label: "Start the timer when you begin working" },
+            { label: "Stop the timer when you finish" },
+            { label: "Add a short note about what you did" },
+          ]}
+        />
+      )}
+
+      {!loading &&
+        (isAdmin ? (
+          <AdminStats
+            projects={projects}
+            members={members}
+            pendingCount={pendingCount}
+            openSessions={allOpenSessions}
+            orgTodaySeconds={orgTodaySeconds}
+            orgWeekSeconds={orgWeekSeconds}
+            lifetimeTotals={totals}
+          />
+        ) : (
+          <EmployeeStats
+            myTodaySeconds={totalToday}
+            myWeekSeconds={totalWeek}
+            runningProjectName={
+              openSession ? projectById.get(openSession.project_id)?.name ?? null : null
+            }
+            recentProjects={recentProjects}
+            recentSessions={myWeekSessions.filter((s) => s.end_time)}
+            projectById={projectById}
+            busyId={busyId}
+            onQuickStart={quickStart}
+          />
+        ))}
+
       {loading ? (
-        <div className="flex justify-center py-16">
-          <Loader2 className="animate-spin muted" />
+        <div className="space-y-3">
+          <CardSkeleton lines={2} />
+          <CardSkeleton lines={3} />
+          <CardSkeleton lines={3} />
         </div>
       ) : cards.length === 0 ? (
         <div className="card p-8 text-center">
@@ -249,6 +419,10 @@ export default function TodayPage() {
               onPause={() => onPause(p.id)}
               onStop={() => onStop(p.id)}
               onRemove={() => onRemove(p.id)}
+              onEditNote={(s) => {
+                setNotesMode("edit");
+                setNotesFor(s);
+              }}
             />
           ))}
 
@@ -259,6 +433,52 @@ export default function TodayPage() {
           >
             <CalendarPlus size={18} /> Add project to today
           </button>
+        </div>
+      )}
+
+      {!loading && projects.length > 0 && (
+        <div className="mt-3 text-center">
+          <button
+            className="inline-flex items-center gap-1.5 text-xs muted hover:text-brand"
+            onClick={() => setManualOpen(true)}
+          >
+            <History size={13} /> Forgot to track time? Request a manual entry
+          </button>
+        </div>
+      )}
+
+      {/* My manual-time requests: pending until the admin approves. */}
+      {!loading && myRequests.length > 0 && (
+        <div className="card mt-3 p-3">
+          <p className="muted mb-2 text-[11px] font-medium uppercase tracking-wide">
+            My manual time requests
+          </p>
+          <div className="space-y-1">
+            {myRequests.map((r) => {
+              const proj = projectById.get(r.project_id);
+              const tone =
+                r.status === "approved"
+                  ? { background: "rgba(5,150,105,0.12)", color: "#059669" }
+                  : r.status === "rejected"
+                    ? { background: "rgba(220,38,38,0.12)", color: "#dc2626" }
+                    : { background: "rgba(217,119,6,0.13)", color: "#b45309" };
+              return (
+                <div key={r.id} className="flex items-center justify-between gap-2 text-xs">
+                  <span className="muted min-w-0 truncate">
+                    {proj?.name ?? "—"} ·{" "}
+                    {new Date(r.start_time).toLocaleDateString(undefined, {
+                      day: "numeric",
+                      month: "short",
+                    })}{" "}
+                    · {secsToHM(r.duration_seconds)}
+                  </span>
+                  <span className="rounded-full px-2 py-0.5 font-semibold capitalize" style={tone}>
+                    {r.status}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -273,8 +493,16 @@ export default function TodayPage() {
         userId={member.userId}
       />
 
+      <ManualTimeModal
+        open={manualOpen}
+        onClose={() => setManualOpen(false)}
+        onSubmitted={reload}
+        projects={projects}
+      />
+
       <SessionNotesModal
         session={notesFor}
+        mode={notesMode}
         projectName={notesProject ? `${notesProject.project_number} — ${notesProject.name}` : ""}
         onClose={() => {
           setNotesFor(null);

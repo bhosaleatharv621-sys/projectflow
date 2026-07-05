@@ -1,24 +1,29 @@
 "use client";
 
-// Notes-after-stop: the timer is stopped FIRST (so no time accrues while the
-// user types), then this modal captures optional work notes and attaches them
-// to the just-closed session. Skipping keeps the session — time is never lost.
+// Notes-after-stop AND edit-later: the timer is always stopped FIRST (so no
+// time accrues while the user types), then this modal captures optional work
+// notes and attaches them to the closed session. Skipping/closing keeps the
+// session — recorded time is never lost, even on network failure.
 
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { updateSessionNotes } from "@/lib/api";
 import { track } from "@/lib/sync";
+import { toast } from "@/lib/toast";
+import { friendlyError } from "@/lib/errors";
 import { secsToHM } from "@/lib/time";
 import type { TimeSession } from "@/lib/types";
 
 export function SessionNotesModal({
   session,
   projectName,
+  mode = "create",
   onClose,
 }: {
-  session: TimeSession | null; // the just-stopped session; null = closed
+  session: TimeSession | null; // the target session; null = modal closed
   projectName: string;
+  mode?: "create" | "edit"; // create = right after stopping; edit = later
   onClose: () => void;
 }) {
   const [notes, setNotes] = useState("");
@@ -27,16 +32,16 @@ export function SessionNotesModal({
 
   useEffect(() => {
     if (session) {
-      setNotes("");
+      setNotes(mode === "edit" ? session.notes ?? "" : "");
       setErr(null);
     }
-  }, [session]);
+  }, [session, mode]);
 
   if (!session) return null;
 
   async function save() {
     if (!session) return;
-    if (!notes.trim()) {
+    if (mode === "create" && !notes.trim()) {
       onClose(); // nothing to attach
       return;
     }
@@ -44,21 +49,29 @@ export function SessionNotesModal({
     setErr(null);
     try {
       await track(updateSessionNotes(session.id, notes));
+      toast.success(mode === "edit" ? "Notes updated" : "Notes saved");
       onClose();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Could not save notes.");
+      const msg = friendlyError(e);
+      setErr(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <Modal open onClose={onClose} title="Session stopped — add work notes">
+    <Modal
+      open
+      onClose={onClose}
+      title={mode === "edit" ? "Edit work notes" : "Session stopped — add work notes"}
+    >
       <p className="muted mb-3 text-sm">
         <span className="font-medium" style={{ color: "var(--text)" }}>
           {projectName}
         </span>{" "}
-        · {secsToHM(session.duration_seconds ?? 0)} recorded. Your time is already saved.
+        · {secsToHM(session.duration_seconds ?? 0)} recorded.
+        {mode === "create" && " Your time is already saved."}
       </p>
       <textarea
         autoFocus
@@ -70,11 +83,11 @@ export function SessionNotesModal({
       {err && <p className="mt-2 text-sm text-red-500">{err}</p>}
       <div className="mt-4 flex justify-end gap-2">
         <button className="btn btn-ghost" onClick={onClose} disabled={busy}>
-          Skip
+          {mode === "edit" ? "Cancel" : "Skip"}
         </button>
         <button className="btn btn-primary" onClick={save} disabled={busy}>
           {busy && <Loader2 size={16} className="animate-spin" />}
-          Save session notes
+          {mode === "edit" ? "Update notes" : "Save session notes"}
         </button>
       </div>
     </Modal>
